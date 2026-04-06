@@ -74,26 +74,49 @@ class LlmConfigActivity : BaseActivity() {
             }
         }
 
-        // Active model
+        // Active model (local list id, path-only download, or cloud)
         val currentModelId = KVUtils.getLlmModelName()
         val currentModel = models.find { it.id == currentModelId }
-        if (currentModel != null) {
-            activeModelName.text = currentModel.displayName
-            activeModelMeta.text = "${currentModel.fileName} · On-device"
-            val downloaded = LocalModelManager.isModelDownloaded(this, currentModel)
-            activeModelStatus.text = if (downloaded) "● Ready" else "● Not downloaded"
-            activeModelStatus.setTextColor(if (downloaded) getColor(R.color.colorSuccessPrimary) else getColor(R.color.colorWarningPrimary))
-        } else {
-            activeModelName.text = "No model selected"
-            activeModelMeta.text = "Download a model below"
-            activeModelStatus.text = "● Not configured"
-            activeModelStatus.setTextColor(Color.parseColor("#8b949e"))
+        val pathModel = LocalModelManager.modelForLocalPath(KVUtils.getLocalModelPath())
+        when {
+            KVUtils.isRemoteLlmConfigured() -> {
+                activeModelName.text = KVUtils.getLlmModelName()
+                val host = KVUtils.getLlmBaseUrl().ifEmpty { "Default API endpoint" }
+                activeModelMeta.text = "$host · Cloud"
+                activeModelStatus.text = "● Ready"
+                activeModelStatus.setTextColor(getColor(R.color.colorSuccessPrimary))
+            }
+            KVUtils.getLlmProvider() == "LOCAL" && currentModel != null -> {
+                activeModelName.text = currentModel.displayName
+                activeModelMeta.text = "${currentModel.fileName} · On-device"
+                val downloaded = LocalModelManager.isModelDownloaded(this, currentModel)
+                activeModelStatus.text = if (downloaded) "● Ready" else "● Not downloaded"
+                activeModelStatus.setTextColor(if (downloaded) getColor(R.color.colorSuccessPrimary) else getColor(R.color.colorWarningPrimary))
+            }
+            pathModel != null -> {
+                activeModelName.text = pathModel.displayName
+                activeModelMeta.text = "${pathModel.fileName} · On-device"
+                val downloaded = LocalModelManager.isModelDownloaded(this, pathModel)
+                activeModelStatus.text = if (downloaded) "● Ready — tap Use if chat does not start" else "● Not downloaded"
+                activeModelStatus.setTextColor(if (downloaded) getColor(R.color.colorSuccessPrimary) else getColor(R.color.colorWarningPrimary))
+            }
+            else -> {
+                activeModelName.text = "No model selected"
+                activeModelMeta.text = "Download below or configure Cloud LLM"
+                activeModelStatus.text = "● Not configured"
+                activeModelStatus.setTextColor(Color.parseColor("#8b949e"))
+            }
         }
 
         // Build model list
         models.forEach { model ->
             val downloaded = LocalModelManager.isModelDownloaded(this, model)
-            val isActive = model.id == currentModelId
+            val isActive = when {
+                KVUtils.isRemoteLlmConfigured() -> false
+                KVUtils.getLlmProvider() == "LOCAL" -> model.id == currentModelId
+                KVUtils.shouldLoadLocalLiteRt() && pathModel?.id == model.id -> true
+                else -> false
+            }
 
             val card = CardView(this).apply {
                 layoutParams = LinearLayout.LayoutParams(

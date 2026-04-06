@@ -82,6 +82,10 @@ object LocalModelManager {
         return dir
     }
 
+    /** Resolve catalog entry from a stored on-disk path, if it matches a known file name. */
+    fun modelForLocalPath(path: String): ModelInfo? =
+        AVAILABLE_MODELS.find { path.endsWith(it.fileName) }
+
     /**
      * Check if a model is already downloaded.
      */

@@ -19,7 +19,11 @@ import androidx.drawerlayout.widget.DrawerLayout
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import io.agents.pokeclaw.R
+import io.agents.pokeclaw.agent.llm.LlmClientFactory
 import io.agents.pokeclaw.agent.llm.LocalModelManager
+import dev.langchain4j.data.message.AiMessage
+import dev.langchain4j.data.message.SystemMessage
+import dev.langchain4j.data.message.UserMessage
 import io.agents.pokeclaw.appViewModel
 import io.agents.pokeclaw.base.BaseActivity
 import androidx.appcompat.app.AppCompatDelegate
@@ -199,6 +203,8 @@ class ChatActivity : BaseActivity() {
             }
         } else if (!isModelReady && engine == null && KVUtils.getLocalModelPath().isNotEmpty()) {
             loadModelIfReady()
+        } else if (!isModelReady && KVUtils.isRemoteLlmConfigured()) {
+            loadModelIfReady()
         }
     }
 
@@ -208,44 +214,34 @@ class ChatActivity : BaseActivity() {
     }
 
     private fun loadModelIfReady() {
-        val modelPath = KVUtils.getLocalModelPath()
-        if (modelPath.isEmpty()) {
-            // Auto-download default model on first launch
-            val defaultModel = LocalModelManager.AVAILABLE_MODELS.first()
-            tvStatus.text = "Downloading ${defaultModel.displayName}..."
-            addSystem("First launch — downloading AI model. This may take a few minutes.")
-            setButtonsEnabled(false)
-
+        if (KVUtils.isRemoteLlmConfigured()) {
+            isModelReady = true
+            tvStatus.text = "● ${KVUtils.getLlmModelName()} · Cloud"
+            setButtonsEnabled(true)
             executor.submit {
-                LocalModelManager.downloadModel(this, defaultModel, object : LocalModelManager.DownloadCallback {
-                    override fun onProgress(bytesDownloaded: Long, totalBytes: Long, bytesPerSecond: Long) {
-                        val pct = if (totalBytes > 0) (bytesDownloaded * 100 / totalBytes).toInt() else 0
-                        val mbDl = bytesDownloaded / 1_000_000
-                        val mbTotal = totalBytes / 1_000_000
-                        val speedMb = bytesPerSecond / 1_000_000.0
-                        runOnUiThread {
-                            tvStatus.text = "Downloading: $pct% ($mbDl/$mbTotal MB, ${"%.1f".format(speedMb)} MB/s)"
-                        }
-                    }
-                    override fun onComplete(modelPath: String) {
-                        KVUtils.setLlmProvider("LOCAL")
-                        KVUtils.setLocalModelPath(modelPath)
-                        KVUtils.setLlmModelName(defaultModel.id)
-                        runOnUiThread {
-                            addSystem("Model ready! You can start chatting.")
-                            loadModelIfReady() // recurse to load
-                        }
-                    }
-                    override fun onError(error: String) {
-                        runOnUiThread {
-                            tvStatus.text = "Download failed"
-                            addSystem("Failed to download model: $error. Tap ⚙ to try manually.")
-                        }
-                    }
-                })
+                try { conversation?.close() } catch (_: Exception) {}
+                conversation = null
+                engine = null
+                io.agents.pokeclaw.agent.llm.EngineHolder.close()
             }
             return
         }
+
+        if (!KVUtils.shouldLoadLocalLiteRt()) {
+            tvStatus.text = "No model — open Models to download or configure Cloud LLM"
+            isModelReady = false
+            setButtonsEnabled(false)
+            return
+        }
+
+        val modelPath = KVUtils.getLocalModelPath()
+        if (modelPath.isEmpty()) {
+            tvStatus.text = "No on-device model — download in Models"
+            isModelReady = false
+            setButtonsEnabled(false)
+            return
+        }
+
         tvStatus.text = "Loading: ${modelPath.substringAfterLast('/')}"
         setButtonsEnabled(false)
         executor.submit { loadModel(modelPath) }
@@ -293,23 +289,49 @@ class ChatActivity : BaseActivity() {
     }
 
     private fun sendChat(text: String) {
+        if (!isModelReady) return
         addUser(text)
         etInput.text.clear()
         setProcessing(true)
 
-        // Add placeholder
         adapter.addMessage(ChatMessage(ChatMessage.Role.ASSISTANT, "..."))
         scrollBottom()
 
         executor.submit {
             try {
-                val response = conversation!!.sendMessage(text)
-                val responseText = response?.toString() ?: "(no response)"
-                runOnUiThread {
-                    adapter.updateLastAssistant(responseText)
-                    scrollBottom()
-                    setProcessing(false)
-                    saveChat()
+                when {
+                    KVUtils.isRemoteLlmConfigured() -> {
+                        val client = LlmClientFactory.create(appViewModel.getAgentConfig())
+                        try {
+                            val lcMessages = uiMessagesToLangchain(adapter.getAllMessages().dropLast(1))
+                            val response = client.chat(lcMessages, emptyList())
+                            val responseText = (response.text ?: "").ifEmpty { "(no response)" }
+                            runOnUiThread {
+                                adapter.updateLastAssistant(responseText)
+                                scrollBottom()
+                                setProcessing(false)
+                                saveChat()
+                            }
+                        } finally {
+                            client.close()
+                        }
+                    }
+                    conversation != null -> {
+                        val response = conversation!!.sendMessage(text)
+                        val responseText = response?.toString() ?: "(no response)"
+                        runOnUiThread {
+                            adapter.updateLastAssistant(responseText)
+                            scrollBottom()
+                            setProcessing(false)
+                            saveChat()
+                        }
+                    }
+                    else -> {
+                        runOnUiThread {
+                            adapter.updateLastAssistant("Configure an on-device or cloud model in Models.")
+                            setProcessing(false)
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 XLog.e(TAG, "Chat error", e)
@@ -319,6 +341,19 @@ class ChatActivity : BaseActivity() {
                 }
             }
         }
+    }
+
+    private fun uiMessagesToLangchain(messages: List<ChatMessage>): List<dev.langchain4j.data.message.ChatMessage> {
+        val out = ArrayList<dev.langchain4j.data.message.ChatMessage>()
+        for (m in messages) {
+            when (m.role) {
+                ChatMessage.Role.USER -> out.add(UserMessage.from(m.content))
+                ChatMessage.Role.ASSISTANT -> if (m.content.isNotBlank()) out.add(AiMessage.from(m.content))
+                ChatMessage.Role.SYSTEM -> out.add(SystemMessage.from(m.content))
+                ChatMessage.Role.TOOL_GROUP -> { }
+            }
+        }
+        return out
     }
 
     private fun sendTask(text: String) {
@@ -397,7 +432,7 @@ class ChatActivity : BaseActivity() {
                     drawerLayout.close()
 
                     // Restore LLM context using digest + recent messages
-                    if (engine != null) {
+                    if (KVUtils.shouldLoadLocalLiteRt() && engine != null) {
                         executor.submit {
                             try {
                                 try { conversation?.close() } catch (_: Exception) {}
@@ -424,6 +459,8 @@ class ChatActivity : BaseActivity() {
                                 runOnUiThread { addSystem("History loaded. New context started.") }
                             }
                         }
+                    } else if (KVUtils.isRemoteLlmConfigured()) {
+                        addSystem("History loaded. Cloud mode does not replay on-device context.")
                     }
                 }
             }
@@ -437,15 +474,19 @@ class ChatActivity : BaseActivity() {
         saveChat()
         conversationId = "chat_${System.currentTimeMillis()}"
         adapter.clear()
-        executor.submit {
-            try { conversation?.close() } catch (_: Exception) {}
-            conversation = engine?.createConversation(
-                ConversationConfig(
-                    systemInstruction = Contents.of("You are a helpful AI assistant on an Android phone."),
-                    samplerConfig = SamplerConfig(topK = 64, topP = 0.95, temperature = 0.7)
+        if (KVUtils.shouldLoadLocalLiteRt() && engine != null) {
+            executor.submit {
+                try { conversation?.close() } catch (_: Exception) {}
+                conversation = engine?.createConversation(
+                    ConversationConfig(
+                        systemInstruction = Contents.of("You are a helpful AI assistant on an Android phone."),
+                        samplerConfig = SamplerConfig(topK = 64, topP = 0.95, temperature = 0.7)
+                    )
                 )
-            )
-            runOnUiThread { addSystem("New conversation started.") }
+                runOnUiThread { addSystem("New conversation started.") }
+            }
+        } else {
+            addSystem("New conversation started.")
         }
     }
 
@@ -460,7 +501,12 @@ class ChatActivity : BaseActivity() {
     }
 
     private fun saveChat() {
-        val modelName = KVUtils.getLocalModelPath().substringAfterLast('/').substringBeforeLast('.')
+        val modelName = when {
+            KVUtils.isRemoteLlmConfigured() -> KVUtils.getLlmModelName()
+            KVUtils.getLocalModelPath().isNotEmpty() ->
+                KVUtils.getLocalModelPath().substringAfterLast('/').substringBeforeLast('.')
+            else -> "none"
+        }
         ChatHistoryManager.save(this, conversationId, adapter.getAllMessages(), modelName)
         loadSidebarHistory()
     }

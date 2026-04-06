@@ -212,4 +212,26 @@ object KVUtils {
     /** 是否已配置 LLM（API Key、Base URL 或本地模型路径非空即视为已配置） */
     fun hasLlmConfig(): Boolean =
         getLlmApiKey().isNotEmpty() || getLlmBaseUrl().isNotEmpty() || getLocalModelPath().isNotEmpty()
+
+    /**
+     * Remote (OpenAI-compatible / Anthropic) chat is usable: not LOCAL provider, model id set,
+     * and either API key or custom base URL (e.g. Together, Ollama).
+     */
+    fun isRemoteLlmConfigured(): Boolean {
+        if (getLlmProvider() == "LOCAL") return false
+        if (getLlmModelName().isEmpty()) return false
+        return getLlmApiKey().isNotEmpty() || getLlmBaseUrl().isNotEmpty()
+    }
+
+    /**
+     * Whether the on-device LiteRT engine should load: explicit LOCAL, or a downloaded file
+     * with no active remote profile (default OPENAI + no keys still uses local file if present).
+     */
+    fun shouldLoadLocalLiteRt(): Boolean {
+        if (getLlmProvider() == "LOCAL") {
+            return getLocalModelPath().isNotEmpty()
+        }
+        if (getLocalModelPath().isEmpty()) return false
+        return !isRemoteLlmConfigured()
+    }
 }

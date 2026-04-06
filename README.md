@@ -135,6 +135,22 @@ That said, there are a LOT of issues. That's expected for something this new. If
 
 Every issue makes this better. Every star helps more people find it.
 
+## Build from source (JDK + SDK + emulator)
+
+On a clean machine (no Android Studio required):
+
+```bash
+make setup                 # JDK 17, Android cmdline-tools, platform 36, build-tools, licenses, local.properties
+make devices help          # list / slim AVD / USB / cloud farms
+make devices create-slim && make devices start poke_slim
+make run                   # installDebug + open app (day-to-day; Gradle is incremental — not a full rebuild every time)
+# or: make build           # only produces APK under app/build/outputs/ (does not install)
+# Already built? Skip Gradle:  make install-apk   or   make run-apk
+# Store/other key on device:  make uninstall && make install-apk
+```
+
+See `make help` and `scripts/dev-setup.sh` for env overrides (`ANDROID_SDK_ROOT`, `ANDROID_CMDLINE_TOOLS_URL`, etc.).
+
 ## Acknowledgments
 
 PokeClaw exists because of [Gemma 4](https://blog.google/innovation-and-ai/technology/developers-tools/gemma-4/) by [Google DeepMind](https://github.com/google-deepmind). Thank you to [Clément Farabet](https://github.com/clementfarabet), [Olivier Lacombe](https://github.com/olivierlacombe), and the entire Gemma team for shipping an open model with native tool calling under Apache 2.0. You made it possible for a solo developer to build a working phone agent in two nights. The [LiteRT-LM](https://ai.google.dev/edge/litert/llm/overview) runtime is what makes on-device inference practical.
