@@ -28,6 +28,14 @@ class LlmConfigActivity : BaseActivity() {
 
     private val executor = Executors.newSingleThreadExecutor()
     private var isDownloading = false
+    private var downloadingModelId: String? = null
+    private var activeDownloadHandle: LocalModelManager.DownloadHandle? = null
+
+    override fun onDestroy() {
+        activeDownloadHandle?.cancel()
+        executor.shutdown()
+        super.onDestroy()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -204,29 +212,47 @@ class LlmConfigActivity : BaseActivity() {
                     row.addView(delBtn)
                 }
             } else {
-                val dlBtn = TextView(this).apply {
-                    text = "↓ Download"
-                    textSize = 13f
-                    setTextColor(getColor(R.color.colorInfoPrimary))
-                    setPadding(dp(12), dp(6), dp(12), dp(6))
-                    setOnClickListener {
-                        if (isDownloading) {
-                            Toast.makeText(this@LlmConfigActivity, "Already downloading", Toast.LENGTH_SHORT).show()
-                            return@setOnClickListener
+                val dlBtn = TextView(this)
+                dlBtn.text = "↓ ${getString(R.string.model_download_action)}"
+                dlBtn.textSize = 13f
+                dlBtn.setTextColor(getColor(R.color.colorInfoPrimary))
+                dlBtn.setPadding(dp(12), dp(6), dp(12), dp(6))
+                dlBtn.setOnClickListener {
+                    if (isDownloading) {
+                        if (downloadingModelId == model.id) {
+                            activeDownloadHandle?.cancel()
+                        } else {
+                            Toast.makeText(
+                                this@LlmConfigActivity,
+                                getString(R.string.model_download_busy),
+                                Toast.LENGTH_LONG,
+                            ).show()
                         }
-                        isDownloading = true
-                        text = "Downloading..."
-                        isEnabled = false
+                        return@setOnClickListener
+                    }
+                    isDownloading = true
+                    downloadingModelId = model.id
+                    val handle = LocalModelManager.DownloadHandle()
+                    activeDownloadHandle = handle
+                    dlBtn.text = getString(R.string.model_download_cancel)
+                    dlBtn.isEnabled = true
 
-                        executor.submit {
-                            LocalModelManager.downloadModel(this@LlmConfigActivity, model, object : LocalModelManager.DownloadCallback {
+                    executor.submit {
+                        LocalModelManager.downloadModel(
+                            this@LlmConfigActivity,
+                            model,
+                            object : LocalModelManager.DownloadCallback {
                                 override fun onProgress(bytesDownloaded: Long, totalBytes: Long, bytesPerSecond: Long) {
                                     val pct = if (totalBytes > 0) (bytesDownloaded * 100 / totalBytes).toInt() else 0
-                                    runOnUiThread { text = "$pct%" }
+                                    runOnUiThread {
+                                        dlBtn.text = "${getString(R.string.model_download_progress)} $pct%"
+                                    }
                                 }
                                 override fun onComplete(modelPath: String) {
                                     runOnUiThread {
                                         isDownloading = false
+                                        downloadingModelId = null
+                                        activeDownloadHandle = null
                                         Toast.makeText(this@LlmConfigActivity, "Downloaded!", Toast.LENGTH_SHORT).show()
                                         recreate()
                                     }
@@ -234,13 +260,29 @@ class LlmConfigActivity : BaseActivity() {
                                 override fun onError(error: String) {
                                     runOnUiThread {
                                         isDownloading = false
-                                        text = "↓ Download"
-                                        isEnabled = true
+                                        downloadingModelId = null
+                                        activeDownloadHandle = null
+                                        dlBtn.text = "↓ ${getString(R.string.model_download_action)}"
+                                        dlBtn.isEnabled = true
                                         Toast.makeText(this@LlmConfigActivity, error, Toast.LENGTH_LONG).show()
                                     }
                                 }
-                            })
-                        }
+                                override fun onCancelled() {
+                                    runOnUiThread {
+                                        isDownloading = false
+                                        downloadingModelId = null
+                                        activeDownloadHandle = null
+                                        Toast.makeText(
+                                            this@LlmConfigActivity,
+                                            getString(R.string.model_download_cancelled_toast),
+                                            Toast.LENGTH_SHORT,
+                                        ).show()
+                                        recreate()
+                                    }
+                                }
+                            },
+                            handle,
+                        )
                     }
                 }
                 row.addView(dlBtn)
@@ -254,38 +296,71 @@ class LlmConfigActivity : BaseActivity() {
         updateStorageInfo()
 
         findViewById<TextView>(R.id.tvCloudTip)?.setTextColor(Color.parseColor("#8b949e"))
+        findViewById<TextView>(R.id.tvMcpTip)?.setTextColor(Color.parseColor("#8b949e"))
 
         // Cloud LLM
         val etApiKey = findViewById<EditText>(R.id.etApiKey)
         val etBaseUrl = findViewById<EditText>(R.id.etBaseUrl)
         val etModelName = findViewById<EditText>(R.id.etModelName)
+        val etTemperature = findViewById<EditText>(R.id.etTemperature)
+        val etTopP = findViewById<EditText>(R.id.etTopP)
+        val etMaxOutputTokens = findViewById<EditText>(R.id.etMaxOutputTokens)
+        val etSkillsMarkdown = findViewById<EditText>(R.id.etSkillsMarkdown)
+        val etMcpCatalogUrl = findViewById<EditText>(R.id.etMcpCatalogUrl)
+        val etMcpInvokeUrl = findViewById<EditText>(R.id.etMcpInvokeUrl)
+
         etApiKey.setText(KVUtils.getLlmApiKey())
         etBaseUrl.setText(KVUtils.getLlmBaseUrl())
         etModelName.setText(if (KVUtils.getLlmProvider() != "LOCAL") KVUtils.getLlmModelName() else "")
+        etTemperature.setText(KVUtils.getLlmTemperatureString())
+        etTopP.setText(KVUtils.getLlmTopPString())
+        etMaxOutputTokens.setText(KVUtils.getLlmMaxOutputTokensString())
+        etSkillsMarkdown.setText(KVUtils.getLlmSkillsMarkdown())
+        etMcpCatalogUrl.setText(KVUtils.getMcpCatalogUrl())
+        etMcpInvokeUrl.setText(KVUtils.getMcpInvokeUrl())
 
         findViewById<KButton>(R.id.btnSaveCloud).setOnClickListener {
+            fun persistAdvanced() {
+                KVUtils.setLlmTemperatureString(etTemperature.text.toString().trim())
+                KVUtils.setLlmTopPString(etTopP.text.toString().trim())
+                KVUtils.setLlmMaxOutputTokensString(etMaxOutputTokens.text.toString().trim())
+                KVUtils.setLlmSkillsMarkdown(etSkillsMarkdown.text.toString())
+                KVUtils.setMcpCatalogUrl(etMcpCatalogUrl.text.toString().trim())
+                KVUtils.setMcpInvokeUrl(etMcpInvokeUrl.text.toString().trim())
+            }
+            persistAdvanced()
+
             val apiKey = etApiKey.text.toString().trim()
             val baseUrl = etBaseUrl.text.toString().trim()
             val modelName = etModelName.text.toString().trim()
+            val wantsCloud = apiKey.isNotEmpty() || baseUrl.isNotEmpty()
 
-            if (apiKey.isEmpty() && baseUrl.isEmpty()) {
-                Toast.makeText(this, "Enter API Key or Base URL", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
+            if (wantsCloud) {
+                if (modelName.isEmpty()) {
+                    Toast.makeText(this, getString(R.string.llm_config_model_required), Toast.LENGTH_LONG).show()
+                    return@setOnClickListener
+                }
+                KVUtils.setLlmProvider("OPENAI")
+                KVUtils.setLlmApiKey(apiKey)
+                KVUtils.setLlmBaseUrl(baseUrl)
+                KVUtils.setLlmModelName(modelName)
+                ClawApplication.appViewModelInstance.updateAgentConfig()
+                ClawApplication.appViewModelInstance.initAgent()
+                ClawApplication.appViewModelInstance.afterInit()
+                Toast.makeText(this, getString(R.string.llm_config_saved), Toast.LENGTH_SHORT).show()
+                finish()
+            } else {
+                if (KVUtils.hasLlmConfig()) {
+                    ClawApplication.appViewModelInstance.updateAgentConfig()
+                    ClawApplication.appViewModelInstance.initAgent()
+                }
+                val msg = if (KVUtils.hasLlmConfig()) {
+                    getString(R.string.llm_config_advanced_saved)
+                } else {
+                    getString(R.string.llm_config_advanced_saved_deferred)
+                }
+                Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
             }
-            if (modelName.isEmpty()) {
-                Toast.makeText(this, getString(R.string.llm_config_model_required), Toast.LENGTH_LONG).show()
-                return@setOnClickListener
-            }
-
-            KVUtils.setLlmProvider("OPENAI")
-            KVUtils.setLlmApiKey(apiKey)
-            KVUtils.setLlmBaseUrl(baseUrl)
-            KVUtils.setLlmModelName(modelName)
-            ClawApplication.appViewModelInstance.updateAgentConfig()
-            ClawApplication.appViewModelInstance.initAgent()
-            ClawApplication.appViewModelInstance.afterInit()
-            Toast.makeText(this, "Cloud LLM saved", Toast.LENGTH_SHORT).show()
-            finish()
         }
     }
 

@@ -197,6 +197,12 @@ object KVUtils {
     private const val KEY_LLM_MODEL_NAME = "KEY_LLM_MODEL_NAME"
     private const val KEY_LLM_PROVIDER = "KEY_LLM_PROVIDER"
     private const val KEY_LOCAL_MODEL_PATH = "KEY_LOCAL_MODEL_PATH"
+    private const val KEY_LLM_TEMPERATURE = "KEY_LLM_TEMPERATURE"
+    private const val KEY_LLM_TOP_P = "KEY_LLM_TOP_P"
+    private const val KEY_LLM_MAX_OUTPUT_TOKENS = "KEY_LLM_MAX_OUTPUT_TOKENS"
+    private const val KEY_LLM_SKILLS_MARKDOWN = "KEY_LLM_SKILLS_MARKDOWN"
+    private const val KEY_MCP_CATALOG_URL = "KEY_MCP_CATALOG_URL"
+    private const val KEY_MCP_INVOKE_URL = "KEY_MCP_INVOKE_URL"
 
     fun getLlmApiKey(): String = getString(KEY_LLM_API_KEY, "")
     fun setLlmApiKey(value: String) = putString(KEY_LLM_API_KEY, value)
@@ -208,6 +214,30 @@ object KVUtils {
     fun setLlmProvider(value: String) = putString(KEY_LLM_PROVIDER, value)
     fun getLocalModelPath(): String = getString(KEY_LOCAL_MODEL_PATH, "")
     fun setLocalModelPath(value: String) = putString(KEY_LOCAL_MODEL_PATH, value)
+
+    /** Empty = use app default (0.1). */
+    fun getLlmTemperatureString(): String = getString(KEY_LLM_TEMPERATURE, "")
+    fun setLlmTemperatureString(value: String) = putString(KEY_LLM_TEMPERATURE, value.trim())
+
+    /** Empty = omit top_p (provider default). */
+    fun getLlmTopPString(): String = getString(KEY_LLM_TOP_P, "")
+    fun setLlmTopPString(value: String) = putString(KEY_LLM_TOP_P, value.trim())
+
+    /** Empty = omit max tokens (provider default). */
+    fun getLlmMaxOutputTokensString(): String = getString(KEY_LLM_MAX_OUTPUT_TOKENS, "")
+    fun setLlmMaxOutputTokensString(value: String) = putString(KEY_LLM_MAX_OUTPUT_TOKENS, value.trim())
+
+    /** Appended to the agent system prompt (markdown / free text “skills”). */
+    fun getLlmSkillsMarkdown(): String = getString(KEY_LLM_SKILLS_MARKDOWN, "")
+    fun setLlmSkillsMarkdown(value: String) = putString(KEY_LLM_SKILLS_MARKDOWN, value)
+
+    /** GET — JSON tool list (OpenAI-style or plain array). See [io.agents.pokeclaw.agent.mcp.RemoteMcpToolCatalog]. */
+    fun getMcpCatalogUrl(): String = getString(KEY_MCP_CATALOG_URL, "").trim()
+    fun setMcpCatalogUrl(value: String) = putString(KEY_MCP_CATALOG_URL, value.trim())
+
+    /** POST — JSON body `{ "name": "...", "arguments": { ... } }`, response body = tool result text. */
+    fun getMcpInvokeUrl(): String = getString(KEY_MCP_INVOKE_URL, "").trim()
+    fun setMcpInvokeUrl(value: String) = putString(KEY_MCP_INVOKE_URL, value.trim())
 
     /** 是否已配置 LLM（API Key、Base URL 或本地模型路径非空即视为已配置） */
     fun hasLlmConfig(): Boolean =

@@ -119,6 +119,24 @@
     <string name="llm_config_saved">LLM configuration saved</string>
     <string name="llm_config_api_key_required">Please enter API Key</string>
     <string name="llm_config_model_required">Please enter model name (e.g. gpt-4o or org/model)</string>
+    <string name="llm_config_section_sampling">Sampling</string>
+    <string name="llm_config_temperature">Temperature</string>
+    <string name="llm_config_temperature_hint">e.g. 0.1 — leave empty for default 0.1</string>
+    <string name="llm_config_top_p">Top P</string>
+    <string name="llm_config_top_p_hint">e.g. 0.95 — empty = API default</string>
+    <string name="llm_config_max_output_tokens">Max output tokens</string>
+    <string name="llm_config_max_output_tokens_hint">e.g. 4096 — empty = API default</string>
+    <string name="llm_config_section_skills">Agent skills</string>
+    <string name="llm_config_skills">Extra instructions (markdown)</string>
+    <string name="llm_config_skills_hint">Appended to the system prompt for phone-control tasks (not chat-only).</string>
+    <string name="llm_config_section_mcp">MCP bridge (HTTP)</string>
+    <string name="llm_config_mcp_tip">Optional: catalog URL returns tool JSON; invoke URL accepts POST {\"name\",\"arguments\"}. Unknown tools are forwarded there.</string>
+    <string name="llm_config_mcp_catalog_url">Tool catalog URL</string>
+    <string name="llm_config_mcp_catalog_url_hint">https://your-bridge/tools.json</string>
+    <string name="llm_config_mcp_invoke_url">Tool invoke URL</string>
+    <string name="llm_config_mcp_invoke_url_hint">https://your-bridge/invoke</string>
+    <string name="llm_config_advanced_saved">Sampling, skills, and MCP URLs saved</string>
+    <string name="llm_config_advanced_saved_deferred">Saved. Configure a model to apply to the agent.</string>
     <string name="menu_llm_config">LLM Config</string>
 
     <!-- Settings Menu -->
@@ -236,6 +254,32 @@
     <string name="voice_need_mic_permission">Microphone permission is required for voice input.</string>
     <string name="voice_content_description_record">Record voice</string>
     <string name="voice_content_description_stop">Stop recording</string>
+    <string name="chat_voice_recording_hint">Recording… Tap the mic again to stop</string>
+    <string name="chat_voice_preview_cd">Play or pause voice preview</string>
+    <string name="chat_discard_voice_cd">Discard voice clip</string>
+    <string name="chat_voice_too_short">Clip too short</string>
+    <string name="chat_image_ready">Image attached</string>
+    <string name="chat_discard_image_cd">Remove image</string>
+    <string name="chat_image_load_failed">Could not load image</string>
+    <string name="chat_image_attachment_cd">Attached image</string>
+    <string name="chat_play_voice_cd">Play voice message</string>
+    <string name="chat_reasoning_label">Reasoning</string>
+    <!-- Compose chat task progress — must match TaskOrchestrator callbacks for terminal detection -->
+    <string name="chat_task_progress_completed">Task completed.</string>
+    <string name="chat_task_progress_cancelled">Task cancelled.</string>
+    <string name="chat_task_progress_failed_prefix">Task failed</string>
+    <string name="chat_task_progress_failed">Task failed: %s</string>
+    <string name="chat_task_progress_blocked">Blocked by system dialog.</string>
+    <string name="chat_stop_task">Stop task</string>
+    <string name="chat_stop_task_cd">Stop the running task</string>
+
+    <!-- On-device model download -->
+    <string name="model_download_action">Download</string>
+    <string name="model_download_progress">Downloading…</string>
+    <string name="model_download_cancel">Cancel download</string>
+    <string name="model_download_cancelled_toast">Download cancelled</string>
+    <string name="model_download_cancel_overlay">Cancel</string>
+    <string name="model_download_busy">A model is already downloading. Cancel it on that row first.</string>
 
     <!-- Input Dialog -->
     <string name="input_dialog_need_more">Enter at least %d characters</string>

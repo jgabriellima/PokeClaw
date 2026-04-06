@@ -90,7 +90,10 @@ class HomeActivity : BaseActivity() {
             tvTaskStatus.visibility = View.VISIBLE
             btnSendTask.isEnabled = false
 
-            appViewModel.startNewTask(ChannelEnum.LOCAL, task, "local_${System.currentTimeMillis()}")
+            if (!appViewModel.startNewTask(ChannelEnum.LOCAL, task, "local_${System.currentTimeMillis()}")) {
+                Toast.makeText(this, R.string.channel_msg_task_in_progress, Toast.LENGTH_SHORT).show()
+                tvTaskStatus.visibility = View.GONE
+            }
             etTaskInput.text.clear()
 
             handler.postDelayed({

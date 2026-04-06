@@ -119,6 +119,24 @@
     <string name="llm_config_saved">LLM 配置已保存</string>
     <string name="llm_config_api_key_required">请填写 API Key</string>
     <string name="llm_config_model_required">请填写模型名称（如 gpt-4o 或 org/model）</string>
+    <string name="llm_config_section_sampling">采样</string>
+    <string name="llm_config_temperature">温度 (temperature)</string>
+    <string name="llm_config_temperature_hint">如 0.1 — 留空则默认 0.1</string>
+    <string name="llm_config_top_p">Top P</string>
+    <string name="llm_config_top_p_hint">如 0.95 — 留空则用接口默认</string>
+    <string name="llm_config_max_output_tokens">最大输出 token</string>
+    <string name="llm_config_max_output_tokens_hint">如 4096 — 留空则用接口默认</string>
+    <string name="llm_config_section_skills">Agent 技能</string>
+    <string name="llm_config_skills">附加说明（Markdown）</string>
+    <string name="llm_config_skills_hint">会追加到手机操控任务的系统提示（纯聊天模式不读取）。</string>
+    <string name="llm_config_section_mcp">MCP 桥接（HTTP）</string>
+    <string name="llm_config_mcp_tip">可选：工具目录 URL 返回工具 JSON；执行 URL 接收 POST {\"name\",\"arguments\"}。本地未实现的工具会转发到该地址。</string>
+    <string name="llm_config_mcp_catalog_url">工具目录 URL</string>
+    <string name="llm_config_mcp_catalog_url_hint">https://your-bridge/tools.json</string>
+    <string name="llm_config_mcp_invoke_url">工具执行 URL</string>
+    <string name="llm_config_mcp_invoke_url_hint">https://your-bridge/invoke</string>
+    <string name="llm_config_advanced_saved">已保存采样、技能与 MCP 地址</string>
+    <string name="llm_config_advanced_saved_deferred">已保存。配置模型后才会作用于 Agent。</string>
     <string name="menu_llm_config">LLM 配置</string>
 
     <!-- 设置菜单项 -->
@@ -236,6 +254,30 @@
     <string name="voice_need_mic_permission">语音输入需要麦克风权限。</string>
     <string name="voice_content_description_record">录音</string>
     <string name="voice_content_description_stop">停止录音</string>
+    <string name="chat_voice_recording_hint">录音中… 再次点击麦克风停止</string>
+    <string name="chat_voice_preview_cd">播放或暂停语音预览</string>
+    <string name="chat_discard_voice_cd">删除语音片段</string>
+    <string name="chat_voice_too_short">录音太短</string>
+    <string name="chat_image_ready">已附加图片</string>
+    <string name="chat_discard_image_cd">移除图片</string>
+    <string name="chat_image_load_failed">无法加载图片</string>
+    <string name="chat_image_attachment_cd">附加图片</string>
+    <string name="chat_play_voice_cd">播放语音消息</string>
+    <string name="chat_reasoning_label">推理</string>
+    <string name="chat_task_progress_completed">任务已完成。</string>
+    <string name="chat_task_progress_cancelled">任务已取消。</string>
+    <string name="chat_task_progress_failed_prefix">任务失败</string>
+    <string name="chat_task_progress_failed">任务失败：%s</string>
+    <string name="chat_task_progress_blocked">系统对话框可能正在阻挡屏幕。</string>
+    <string name="chat_stop_task">停止任务</string>
+    <string name="chat_stop_task_cd">停止正在运行的任务</string>
+
+    <string name="model_download_action">下载</string>
+    <string name="model_download_progress">正在下载…</string>
+    <string name="model_download_cancel">取消下载</string>
+    <string name="model_download_cancelled_toast">已取消下载</string>
+    <string name="model_download_cancel_overlay">取消</string>
+    <string name="model_download_busy">已有模型正在下载，请先在对应行取消。</string>
 
     <!-- 输入弹窗 -->
     <string name="input_dialog_need_more">至少输入%d个字符</string>

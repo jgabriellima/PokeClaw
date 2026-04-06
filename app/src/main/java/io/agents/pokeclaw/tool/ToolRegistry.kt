@@ -3,6 +3,7 @@
 
 package io.agents.pokeclaw.tool
 
+import io.agents.pokeclaw.agent.mcp.RemoteMcpToolInvoker
 import io.agents.pokeclaw.tool.impl.*
 import io.agents.pokeclaw.tool.impl.mobile.*
 import io.agents.pokeclaw.tool.impl.tv.*
@@ -78,11 +79,16 @@ object ToolRegistry {
     fun getAllTools(): List<BaseTool> = tools.values.toList()
 
     fun executeTool(name: String, params: Map<String, Any>): ToolResult {
-        val tool = tools[name] ?: return ToolResult.error("Unknown tool: $name")
-        return try {
-            tool.executeWithWaitAfter(params)
-        } catch (e: Exception) {
-            ToolResult.error("Tool execution failed: ${e.message}")
+        tools[name]?.let { tool ->
+            return try {
+                tool.executeWithWaitAfter(params)
+            } catch (e: Exception) {
+                ToolResult.error("Tool execution failed: ${e.message}")
+            }
         }
+        @Suppress("UNCHECKED_CAST")
+        val remote = RemoteMcpToolInvoker.tryExecute(name, params as Map<String, Any?>)
+        if (remote != null) return remote
+        return ToolResult.error("Unknown tool: $name")
     }
 }

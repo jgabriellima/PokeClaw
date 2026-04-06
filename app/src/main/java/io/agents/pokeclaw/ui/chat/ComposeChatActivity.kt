@@ -15,7 +15,9 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
 import androidx.compose.runtime.*
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
@@ -23,13 +25,23 @@ import com.google.ai.edge.litertlm.Content
 import io.agents.pokeclaw.ClawApplication
 import io.agents.pokeclaw.agent.LlmProvider
 import io.agents.pokeclaw.audio.CloudMultimodalMessages
+import io.agents.pokeclaw.audio.downscaleToJpeg
 import io.agents.pokeclaw.audio.ModelAudioSupport
 import io.agents.pokeclaw.audio.PcmWavRecorder
+import io.agents.pokeclaw.audio.VoicePreviewPlayer
+import io.agents.pokeclaw.audio.waveformBarsFromWav
+import io.agents.pokeclaw.audio.wavDurationMsMono16k
 import io.agents.pokeclaw.audio.WhisperKitTranscriber
 import io.agents.pokeclaw.audio.stripOurWavHeaderToPcm16le
 import io.agents.pokeclaw.agent.llm.EngineHolder
+import io.agents.pokeclaw.agent.llm.LiteRtSampling
 import io.agents.pokeclaw.agent.llm.LlmClientFactory
 import io.agents.pokeclaw.agent.llm.LocalModelManager
+import io.agents.pokeclaw.agent.llm.LlmResponse
+import io.agents.pokeclaw.agent.llm.StreamingListener
+import com.google.ai.edge.litertlm.MessageCallback
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicReference
 import dev.langchain4j.data.message.AiMessage
 import dev.langchain4j.data.message.SystemMessage
 import dev.langchain4j.data.message.UserMessage
@@ -49,7 +61,6 @@ import com.google.ai.edge.litertlm.Conversation
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
-import com.google.ai.edge.litertlm.SamplerConfig
 import java.util.concurrent.Executors
 
 /**
@@ -67,11 +78,18 @@ class ComposeChatActivity : ComponentActivity() {
 
     private val chatDraftText = mutableStateOf("")
     private val chatVoiceRecording = mutableStateOf(false)
+    private val chatVoiceDraft = mutableStateOf<ByteArray?>(null)
+    private val chatVoiceDraftWaveform = mutableStateOf<List<Float>>(emptyList())
+    private val chatVoiceRecordingLevels = mutableStateOf<List<Float>>(emptyList())
+    private val chatVoicePreviewPlaying = mutableStateOf(false)
+    private val chatImageDraft = mutableStateOf<ByteArray?>(null)
     private var voiceWavRecorder: PcmWavRecorder? = null
     private val voiceStopHandler = Handler(Looper.getMainLooper())
-    private val voiceStopRunnable = Runnable { stopVoiceRecording() }
+    private val voiceStopRunnable = Runnable { stopVoiceRecordingToDraft() }
+    private val voicePreviewPlayer by lazy { VoicePreviewPlayer(this) }
 
     private lateinit var recordAudioLauncher: ActivityResultLauncher<String>
+    private lateinit var pickImageLauncher: ActivityResultLauncher<PickVisualMediaRequest>
 
     private var conversationId = "chat_${System.currentTimeMillis()}"
     private val executor = Executors.newSingleThreadExecutor()
@@ -88,6 +106,8 @@ class ComposeChatActivity : ComponentActivity() {
     private val _conversations = mutableStateListOf<ChatHistoryManager.ConversationSummary>()
     private val _isDownloading = mutableStateOf(false)
     private val _downloadProgress = mutableStateOf(0)
+    /** True while a phone-control task is in progress (for Stop button). */
+    private val _taskRunning = mutableStateOf(false)
 
     // Permission polling
     private val permHandler = Handler(Looper.getMainLooper())
@@ -105,6 +125,21 @@ class ComposeChatActivity : ComponentActivity() {
         ) { granted ->
             if (granted) startVoiceRecordingInternal()
             else Toast.makeText(this, getString(R.string.voice_need_mic_permission), Toast.LENGTH_LONG).show()
+        }
+        pickImageLauncher = registerForActivityResult(PickVisualMedia()) { uri ->
+            if (uri == null) return@registerForActivityResult
+            executor.execute {
+                try {
+                    val raw = contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return@execute
+                    val (jpeg, _) = downscaleToJpeg(raw)
+                    runOnUiThread { chatImageDraft.value = jpeg }
+                } catch (e: Exception) {
+                    XLog.e(TAG, "pick image failed", e)
+                    runOnUiThread {
+                        Toast.makeText(this, getString(R.string.chat_image_load_failed), Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
         }
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
@@ -132,25 +167,47 @@ class ComposeChatActivity : ComponentActivity() {
                 modelStatus = _modelStatus.value,
                 needsPermission = _needsPermission.value,
                 isProcessing = _isProcessing.value,
+                taskRunning = _taskRunning.value,
+                onStopTask = { stopRunningTask() },
                 isDownloading = _isDownloading.value,
                 downloadProgress = _downloadProgress.value,
                 draftText = chatDraftText.value,
                 onDraftTextChange = { chatDraftText.value = it },
                 isVoiceRecording = chatVoiceRecording.value,
+                voiceRecordingLevels = chatVoiceRecordingLevels.value,
+                voiceDraftWav = chatVoiceDraft.value,
+                voiceDraftWaveform = chatVoiceDraftWaveform.value,
+                voicePreviewPlaying = chatVoicePreviewPlaying.value,
+                voiceDraftDurationLabel = chatVoiceDraft.value?.let { w ->
+                    formatVoiceDurationMs(wavDurationMsMono16k(w))
+                } ?: "",
                 onVoiceToggle = { toggleVoiceRecording() },
+                onVoiceDraftPlayPause = { toggleVoiceDraftPlayback() },
+                onVoiceDraftDiscard = { discardVoiceDraft() },
+                imageAttachmentJpeg = chatImageDraft.value,
+                onImageAttachmentClear = { chatImageDraft.value = null },
+                onPlayMessageVoice = { wav -> playVoiceAttachment(wav) },
                 onSendChat = { text, voiceWav -> sendChat(text, voiceWav) },
                 onSendTask = { sendTask(it) },
                 onNewChat = {
                     chatDraftText.value = ""
+                    discardVoiceDraft()
+                    chatImageDraft.value = null
                     newChat()
                 },
                 onOpenSettings = { startActivity(Intent(this, SettingsActivity::class.java)) },
                 onOpenModels = { startActivity(Intent(this, LlmConfigActivity::class.java)) },
                 onFixPermissions = { startActivity(Intent(this, SettingsActivity::class.java)) },
-                onAttach = { Toast.makeText(this, "Image upload coming soon", Toast.LENGTH_SHORT).show() },
+                onAttach = {
+                    pickImageLauncher.launch(
+                        PickVisualMediaRequest(PickVisualMedia.ImageOnly),
+                    )
+                },
                 conversations = _conversations.toList(),
                 onSelectConversation = {
                     chatDraftText.value = ""
+                    discardVoiceDraft()
+                    chatImageDraft.value = null
                     loadConversation(it)
                 },
                 colors = composeColors,
@@ -200,6 +257,7 @@ class ComposeChatActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        _taskRunning.value = appViewModel.isTaskRunning()
         _needsPermission.value = !ClawAccessibilityService.isRunning()
         loadSidebarHistory()
         permHandler.removeCallbacks(permPoller)
@@ -215,7 +273,7 @@ class ComposeChatActivity : ComponentActivity() {
                     conversation = engine!!.createConversation(
                         ConversationConfig(
                             systemInstruction = Contents.of("You are a helpful AI assistant on an Android phone."),
-                            samplerConfig = SamplerConfig(topK = 64, topP = 0.95, temperature = 0.7)
+                            samplerConfig = LiteRtSampling.fromAgentConfig(appViewModel.getAgentConfig())
                         )
                     )
                     isModelReady = true
@@ -255,10 +313,14 @@ class ComposeChatActivity : ComponentActivity() {
         if (chatVoiceRecording.value) {
             chatVoiceRecording.value = false
             try {
+                voiceWavRecorder?.onAmplitude = null
                 voiceWavRecorder?.stop()
             } catch (_: Exception) { }
             voiceWavRecorder = null
         }
+        try {
+            voicePreviewPlayer.stop()
+        } catch (_: Exception) { }
         super.onDestroy()
         // Close the Conversation but leave the Engine in EngineHolder.
         // The engine will be reused if the Activity is recreated (e.g. rotation).
@@ -365,7 +427,7 @@ class ComposeChatActivity : ComponentActivity() {
                     conversation = engine!!.createConversation(
                         ConversationConfig(
                             systemInstruction = Contents.of("You are a helpful AI assistant on an Android phone."),
-                            samplerConfig = SamplerConfig(topK = 64, topP = 0.95, temperature = 0.7)
+                            samplerConfig = LiteRtSampling.fromAgentConfig(appViewModel.getAgentConfig())
                         )
                     )
                     created = true
@@ -401,17 +463,24 @@ class ComposeChatActivity : ComponentActivity() {
 
     // ==================== CHAT ====================
 
-    private fun sendChat(text: String, voiceWav: ByteArray? = null) {
+    private fun sendChat(text: String, voiceWavFromBar: ByteArray? = null) {
         val trimmed = text.trim()
         if (!isModelReady) return
-        if (trimmed.isEmpty() && (voiceWav == null || voiceWav.isEmpty())) return
+        val imageJpeg = chatImageDraft.value.also { chatImageDraft.value = null }
+        val wavFromUi = voiceWavFromBar ?: chatVoiceDraft.value
+        discardVoiceDraft()
+        if (trimmed.isEmpty() && (wavFromUi == null || wavFromUi.isEmpty()) && imageJpeg == null) return
 
         val userVisible = when {
-            voiceWav != null && trimmed.isNotEmpty() -> "🎤 $trimmed"
-            voiceWav != null -> "🎤 Voice message"
+            imageJpeg != null && wavFromUi != null && trimmed.isNotEmpty() -> "🖼️ 🎤 $trimmed"
+            imageJpeg != null && wavFromUi != null -> "🖼️ 🎤"
+            imageJpeg != null && trimmed.isNotEmpty() -> "🖼️ $trimmed"
+            imageJpeg != null -> "🖼️"
+            wavFromUi != null && trimmed.isNotEmpty() -> "🎤 $trimmed"
+            wavFromUi != null -> "🎤 Voice message"
             else -> trimmed
         }
-        addUser(userVisible)
+        addUser(userVisible, imageJpeg, wavFromUi)
         _isProcessing.value = true
         _messages.add(ChatMessage(ChatMessage.Role.ASSISTANT, "..."))
 
@@ -420,7 +489,8 @@ class ComposeChatActivity : ComponentActivity() {
                 when {
                     KVUtils.isRemoteLlmConfigured() -> {
                         val cfg = appViewModel.getAgentConfig()
-                        var wav = voiceWav
+                        val wavForFallback = wavFromUi
+                        var wav = wavFromUi
                         var textIn = trimmed
                         val tryOpenAiAudio = cfg.provider == LlmProvider.OPENAI &&
                             wav != null &&
@@ -436,39 +506,73 @@ class ComposeChatActivity : ComponentActivity() {
                         }
                         val client = LlmClientFactory.create(cfg)
                         try {
-                            val lastUser: UserMessage? =
-                                if (tryOpenAiAudio && wav != null) {
+                            val lastUser: UserMessage? = when {
+                                imageJpeg != null && wav != null ->
+                                    CloudMultimodalMessages.userTextImageAndWav(textIn, imageJpeg, "image/jpeg", wav)
+                                imageJpeg != null ->
+                                    CloudMultimodalMessages.userTextPlusImage(textIn, imageJpeg, "image/jpeg")
+                                tryOpenAiAudio && wav != null ->
                                     CloudMultimodalMessages.userTextPlusWav(textIn, wav)
-                                } else {
-                                    null
-                                }
-                            val lcMessages = uiMessagesToLangchain(_messages.dropLast(1), lastUser)
-                            fun runRemote(msgs: List<dev.langchain4j.data.message.ChatMessage>): String {
-                                val response = client.chat(msgs, emptyList())
-                                return (response.text ?: "").ifEmpty { "(no response)" }
+                                else -> null
                             }
-                            val responseText = try {
-                                runRemote(lcMessages)
+                            val lcMessages = uiMessagesToLangchain(_messages.dropLast(1), lastUser)
+                            fun runRemoteStream(msgs: List<dev.langchain4j.data.message.ChatMessage>): Pair<String, String> {
+                                val contentSb = StringBuilder()
+                                val reasoningSb = StringBuilder()
+                                val response = client.chatStreaming(msgs, emptyList(), object : StreamingListener {
+                                    override fun onPartialText(token: String) {
+                                        contentSb.append(token)
+                                        val c = contentSb.toString().ifBlank { "..." }
+                                        runOnUiThread { patchLastAssistantContent(c, reasoningSb.toString()) }
+                                    }
+                                    override fun onPartialReasoning(chunk: String) {
+                                        reasoningSb.append(chunk)
+                                        val c = contentSb.toString().ifBlank { "..." }
+                                        runOnUiThread { patchLastAssistantContent(c, reasoningSb.toString()) }
+                                    }
+                                    override fun onComplete(response: LlmResponse) {
+                                        val finalText = (response.text ?: contentSb.toString()).ifBlank { "(no response)" }
+                                        val think = response.reasoning?.takeIf { it.isNotBlank() } ?: reasoningSb.toString()
+                                        runOnUiThread { patchLastAssistantContent(finalText, think) }
+                                    }
+                                    override fun onError(error: Throwable) {
+                                        XLog.e(TAG, "Remote chat stream error", error)
+                                    }
+                                })
+                                val outText = (response.text ?: contentSb.toString()).ifBlank { "(no response)" }
+                                val outReason = response.reasoning?.takeIf { it.isNotBlank() } ?: reasoningSb.toString()
+                                return Pair(outText, outReason)
+                            }
+                            val (responseText, reasoningText) = try {
+                                runRemoteStream(lcMessages)
                             } catch (e: Exception) {
                                 if (tryOpenAiAudio) {
-                                    val capturedWav = voiceWav ?: throw e
                                     XLog.w(TAG, "Multimodal audio request failed, falling back to Whisper text", e)
-                                    val pcm = stripOurWavHeaderToPcm16le(capturedWav)
+                                    val pcm = stripOurWavHeaderToPcm16le(wavForFallback)
                                     val tr = WhisperKitTranscriber.transcribePcm16MonoBlocking(
                                         ClawApplication.instance,
                                         pcm,
                                     )
                                     val merged = listOf(trimmed, tr ?: "").filter { it.isNotBlank() }.joinToString("\n")
                                     val history = uiMessagesToLangchain(_messages.dropLast(2))
-                                    val retryMsgs = history + UserMessage.from(merged)
-                                    runRemote(retryMsgs)
+                                    val retryMsgs = if (imageJpeg != null) {
+                                        history + CloudMultimodalMessages.userTextPlusImage(merged, imageJpeg, "image/jpeg")
+                                    } else {
+                                        history + UserMessage.from(merged)
+                                    }
+                                    runRemoteStream(retryMsgs)
                                 } else {
                                     throw e
                                 }
                             }
                             runOnUiThread {
                                 val idx = _messages.indexOfLast { it.role == ChatMessage.Role.ASSISTANT }
-                                if (idx >= 0) _messages[idx] = _messages[idx].copy(content = responseText)
+                                if (idx >= 0) {
+                                    _messages[idx] = _messages[idx].copy(
+                                        content = responseText,
+                                        reasoning = reasoningText,
+                                    )
+                                }
                                 _isProcessing.value = false
                                 saveChat()
                             }
@@ -477,7 +581,7 @@ class ComposeChatActivity : ComponentActivity() {
                         }
                     }
                     conversation != null -> {
-                        var wavLocal = voiceWav
+                        var wavLocal = wavFromUi
                         var textIn = trimmed
                         if (wavLocal != null && !ModelAudioSupport.localGemma4SupportsNativeAudio()) {
                             val pcm = stripOurWavHeaderToPcm16le(wavLocal)
@@ -488,21 +592,66 @@ class ComposeChatActivity : ComponentActivity() {
                             textIn = listOf(textIn, tr ?: "").filter { it.isNotBlank() }.joinToString("\n")
                             wavLocal = null
                         }
-                        val response = when {
-                            wavLocal != null -> {
-                                val parts = mutableListOf<Content>()
-                                if (textIn.isNotBlank()) {
-                                    parts.add(Content.Text(textIn))
+                        val thinkingCtx = mapOf<String, Any>("enable_thinking" to true)
+                        val latch = CountDownLatch(1)
+                        val errorRef = AtomicReference<Throwable>(null)
+                        var textSoFar = ""
+                        var reasoningSoFar = ""
+                        val callback = object : MessageCallback {
+                            override fun onMessage(message: com.google.ai.edge.litertlm.Message) {
+                                val fullText = liteRtAssistantPlainText(message)
+                                if (fullText.length > textSoFar.length) {
+                                    textSoFar = fullText
+                                } else if (fullText.isNotEmpty()) {
+                                    textSoFar = fullText
                                 }
-                                parts.add(Content.AudioBytes(wavLocal))
-                                conversation!!.sendMessage(Contents.of(parts), emptyMap())
+                                val r = liteRtReasoningFromMessage(message)
+                                if (r.length > reasoningSoFar.length) {
+                                    reasoningSoFar = r
+                                } else if (r.isNotEmpty()) {
+                                    reasoningSoFar = r
+                                }
+                                val show = textSoFar.ifBlank { "..." }
+                                runOnUiThread { patchLastAssistantContent(show, reasoningSoFar) }
                             }
-                            else -> conversation!!.sendMessage(textIn)
+                            override fun onDone() {
+                                latch.countDown()
+                            }
+                            override fun onError(throwable: Throwable) {
+                                errorRef.set(throwable)
+                                latch.countDown()
+                            }
                         }
-                        val responseText = response?.toString() ?: "(no response)"
+                        val hasMultimodal = imageJpeg != null || wavLocal != null
+                        if (hasMultimodal) {
+                            val parts = mutableListOf<Content>()
+                            if (textIn.isNotBlank()) {
+                                parts.add(Content.Text(textIn))
+                            }
+                            if (imageJpeg != null) {
+                                parts.add(Content.ImageBytes(imageJpeg))
+                            }
+                            if (wavLocal != null) {
+                                parts.add(Content.AudioBytes(wavLocal))
+                            }
+                            if (parts.isEmpty()) {
+                                parts.add(Content.Text("(empty)"))
+                            }
+                            conversation!!.sendMessageAsync(Contents.of(parts), callback, thinkingCtx)
+                        } else {
+                            conversation!!.sendMessageAsync(textIn, callback, thinkingCtx)
+                        }
+                        latch.await()
+                        errorRef.get()?.let { throw it }
+                        val responseText = textSoFar.ifBlank { "(no response)" }
                         runOnUiThread {
                             val idx = _messages.indexOfLast { it.role == ChatMessage.Role.ASSISTANT }
-                            if (idx >= 0) _messages[idx] = _messages[idx].copy(content = responseText)
+                            if (idx >= 0) {
+                                _messages[idx] = _messages[idx].copy(
+                                    content = responseText,
+                                    reasoning = reasoningSoFar,
+                                )
+                            }
                             _isProcessing.value = false
                             saveChat()
                         }
@@ -558,9 +707,42 @@ class ComposeChatActivity : ComponentActivity() {
         return out
     }
 
+    private fun formatVoiceDurationMs(ms: Long): String {
+        val s = (ms / 1000L).toInt().coerceAtLeast(0)
+        val m = s / 60
+        return if (m > 0) String.format("%d:%02d", m, s % 60) else "${s}s"
+    }
+
+    private fun discardVoiceDraft() {
+        voiceStopHandler.removeCallbacks(voiceStopRunnable)
+        voicePreviewPlayer.stop()
+        chatVoicePreviewPlaying.value = false
+        chatVoiceDraft.value = null
+        chatVoiceDraftWaveform.value = emptyList()
+    }
+
+    private fun toggleVoiceDraftPlayback() {
+        val w = chatVoiceDraft.value ?: return
+        if (voicePreviewPlayer.isPlaying) {
+            voicePreviewPlayer.stop()
+            chatVoicePreviewPlaying.value = false
+        } else {
+            voicePreviewPlayer.play(w) {
+                runOnUiThread { chatVoicePreviewPlaying.value = false }
+            }
+            chatVoicePreviewPlaying.value = true
+        }
+    }
+
+    private fun playVoiceAttachment(wav: ByteArray) {
+        voicePreviewPlayer.stop()
+        chatVoicePreviewPlaying.value = false
+        voicePreviewPlayer.play(wav) { }
+    }
+
     private fun toggleVoiceRecording() {
         if (chatVoiceRecording.value) {
-            stopVoiceRecording()
+            stopVoiceRecordingToDraft()
         } else {
             when {
                 ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
@@ -574,8 +756,19 @@ class ComposeChatActivity : ComponentActivity() {
 
     private fun startVoiceRecordingInternal() {
         if (chatVoiceRecording.value) return
-        voiceWavRecorder = PcmWavRecorder()
-        if (voiceWavRecorder?.start() != true) {
+        discardVoiceDraft()
+        voicePreviewPlayer.stop()
+        chatVoicePreviewPlaying.value = false
+        chatVoiceRecordingLevels.value = emptyList()
+        val rec = PcmWavRecorder()
+        rec.onAmplitude = { rms ->
+            runOnUiThread {
+                val cur = chatVoiceRecordingLevels.value
+                chatVoiceRecordingLevels.value = (cur + rms).takeLast(56)
+            }
+        }
+        voiceWavRecorder = rec
+        if (rec.start() != true) {
             voiceWavRecorder = null
             Toast.makeText(this, "Could not start microphone", Toast.LENGTH_SHORT).show()
             return
@@ -584,18 +777,22 @@ class ComposeChatActivity : ComponentActivity() {
         voiceStopHandler.postDelayed(voiceStopRunnable, VOICE_MAX_MS)
     }
 
-    private fun stopVoiceRecording() {
+    private fun stopVoiceRecordingToDraft() {
         voiceStopHandler.removeCallbacks(voiceStopRunnable)
         if (!chatVoiceRecording.value) return
         chatVoiceRecording.value = false
+        voiceWavRecorder?.onAmplitude = null
         val wav = try {
             voiceWavRecorder?.stop()
         } finally {
             voiceWavRecorder = null
         }
+        chatVoiceRecordingLevels.value = emptyList()
         if (wav != null && wav.isNotEmpty()) {
-            sendChat(chatDraftText.value.trim(), wav)
-            chatDraftText.value = ""
+            chatVoiceDraft.value = wav
+            chatVoiceDraftWaveform.value = waveformBarsFromWav(wav)
+        } else {
+            Toast.makeText(this, getString(R.string.chat_voice_too_short), Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -638,9 +835,10 @@ class ComposeChatActivity : ComponentActivity() {
                 // Wait 500ms after the callback fires so DefaultAgentService's finally block
                 // (which calls llmClient.close()) has time to complete before we allocate a
                 // new chat engine. This prevents two LiteRT-LM engines coexisting = OOM.
-                if (msg.startsWith("Task completed") || msg.startsWith("Task failed") || msg.startsWith("Blocked")) {
+                if (isTerminalTaskProgress(msg)) {
                     XLog.i(TAG, "sendTask: task done via progress callback, scheduling chat engine reload")
                     _isProcessing.value = false
+                    _taskRunning.value = false
                     appViewModel.taskOrchestrator.taskProgressCallback = null
                     Handler(Looper.getMainLooper()).postDelayed({
                         XLog.i(TAG, "sendTask: reloading chat engine after task engine released")
@@ -677,7 +875,15 @@ class ComposeChatActivity : ComponentActivity() {
             // Now safe to start task — engine is released
             runOnUiThread {
                 try {
-                    appViewModel.startNewTask(ChannelEnum.LOCAL, taskText, taskId)
+                    val started = appViewModel.startNewTask(ChannelEnum.LOCAL, taskText, taskId)
+                    _taskRunning.value = started && appViewModel.isTaskRunning()
+                    if (!started) {
+                        addSystem(getString(R.string.channel_msg_task_in_progress))
+                        _isProcessing.value = false
+                        appViewModel.taskOrchestrator.taskProgressCallback = null
+                        XLog.w(TAG, "sendTask: could not start, another task running")
+                        return@runOnUiThread
+                    }
                     XLog.i(TAG, "sendTask: task started id=$taskId")
                 } catch (e: Exception) {
                     XLog.e(TAG, "sendTask: failed to start task", e)
@@ -704,7 +910,7 @@ class ComposeChatActivity : ComponentActivity() {
                 conversation = engine?.createConversation(
                     ConversationConfig(
                         systemInstruction = Contents.of("You are a helpful AI assistant on an Android phone."),
-                        samplerConfig = SamplerConfig(topK = 64, topP = 0.95, temperature = 0.7)
+                        samplerConfig = LiteRtSampling.fromAgentConfig(appViewModel.getAgentConfig())
                     )
                 )
                 runOnUiThread {
@@ -734,7 +940,7 @@ class ComposeChatActivity : ComponentActivity() {
                     conversation = engine!!.createConversation(
                         ConversationConfig(
                             systemInstruction = Contents.of(systemPrompt),
-                            samplerConfig = SamplerConfig(topK = 64, topP = 0.95, temperature = 0.7)
+                            samplerConfig = LiteRtSampling.fromAgentConfig(appViewModel.getAgentConfig())
                         )
                     )
                     isModelReady = true
@@ -771,7 +977,20 @@ class ComposeChatActivity : ComponentActivity() {
         }
     }
 
-    private fun addUser(text: String) { _messages.add(ChatMessage(ChatMessage.Role.USER, text)) }
+    private fun addUser(
+        text: String,
+        imageJpeg: ByteArray? = null,
+        voiceWav: ByteArray? = null,
+    ) {
+        _messages.add(
+            ChatMessage(
+                ChatMessage.Role.USER,
+                text,
+                attachmentImageJpeg = imageJpeg,
+                attachmentVoiceWav = voiceWav,
+            ),
+        )
+    }
     private fun addSystem(text: String) { _messages.add(ChatMessage(ChatMessage.Role.SYSTEM, text)) }
 
     private fun setButtonsEnabled(enabled: Boolean) {
@@ -793,5 +1012,46 @@ class ComposeChatActivity : ComponentActivity() {
         val convos = ChatHistoryManager.listConversations(this)
         _conversations.clear()
         _conversations.addAll(convos)
+    }
+
+    /** Matches [TaskOrchestrator] progress strings (localized). */
+    private fun isTerminalTaskProgress(msg: String): Boolean =
+        msg == getString(R.string.chat_task_progress_completed) ||
+            msg == getString(R.string.chat_task_progress_cancelled) ||
+            msg.startsWith(getString(R.string.chat_task_progress_failed_prefix)) ||
+            msg == getString(R.string.chat_task_progress_blocked)
+
+    private fun stopRunningTask() {
+        if (!appViewModel.isTaskRunning()) return
+        appViewModel.cancelCurrentTask()
+        _taskRunning.value = false
+    }
+
+    private fun patchLastAssistantContent(content: String, reasoning: String) {
+        val idx = _messages.indexOfLast { it.role == ChatMessage.Role.ASSISTANT }
+        if (idx >= 0) {
+            _messages[idx] = _messages[idx].copy(content = content, reasoning = reasoning)
+        }
+    }
+
+    private fun liteRtAssistantPlainText(m: com.google.ai.edge.litertlm.Message): String {
+        val wrapper = m.contents ?: return ""
+        val parts = wrapper.contents ?: return m.toString()
+        val sb = StringBuilder()
+        for (part in parts) {
+            if (part is Content.Text) {
+                sb.append(part.text)
+            }
+        }
+        return sb.toString().ifEmpty { m.toString() }
+    }
+
+    private fun liteRtReasoningFromMessage(m: com.google.ai.edge.litertlm.Message): String {
+        val ch = m.channels ?: return ""
+        for (k in listOf("thinking", "reasoning", "thought", "internal")) {
+            val v = ch[k]?.trim().orEmpty()
+            if (v.isNotEmpty()) return v
+        }
+        return ""
     }
 }

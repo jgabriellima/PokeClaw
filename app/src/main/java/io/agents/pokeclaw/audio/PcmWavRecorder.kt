@@ -6,6 +6,9 @@ package io.agents.pokeclaw.audio
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import io.agents.pokeclaw.utils.XLog
 import java.io.ByteArrayOutputStream
 import kotlin.math.max
@@ -24,6 +27,12 @@ class PcmWavRecorder {
     private var captureThread: Thread? = null
     private val pcmBuffer = ByteArrayOutputStream()
     @Volatile private var capturing = false
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /** Called on the main thread ~every 50ms while capturing; RMS 0..1 */
+    var onAmplitude: ((Float) -> Unit)? = null
+
+    private var lastLevelPostMs = 0L
 
     fun start(): Boolean {
         if (capturing) return true
@@ -53,6 +62,7 @@ class PcmWavRecorder {
             return false
         }
         pcmBuffer.reset()
+        lastLevelPostMs = 0L
         capturing = true
         audioRecord = record
         record.startRecording()
@@ -60,7 +70,18 @@ class PcmWavRecorder {
             val buf = ByteArray(bufferSize)
             while (capturing) {
                 val n = record.read(buf, 0, buf.size)
-                if (n > 0) pcmBuffer.write(buf, 0, n)
+                if (n > 0) {
+                    pcmBuffer.write(buf, 0, n)
+                    val cb = onAmplitude
+                    if (cb != null) {
+                        val now = SystemClock.elapsedRealtime()
+                        if (now - lastLevelPostMs >= 50L) {
+                            lastLevelPostMs = now
+                            val rms = rmsPcm16LeMono(buf, n)
+                            mainHandler.post { cb(rms) }
+                        }
+                    }
+                }
             }
         }, "pokeclaw-wav-capture").also { it.start() }
         return true

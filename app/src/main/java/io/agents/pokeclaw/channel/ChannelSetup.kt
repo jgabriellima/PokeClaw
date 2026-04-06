@@ -38,11 +38,6 @@ class ChannelSetup(
                     ChannelManager.flushMessages(channel)
                     return
                 }
-                if (!taskOrchestrator.tryAcquireTask(messageID, channel)) {
-                    ChannelManager.sendMessage(channel, app.getString(R.string.channel_msg_task_in_progress), messageID)
-                    ChannelManager.flushMessages(channel)
-                    return
-                }
                 taskOrchestrator.startNewTask(channel, message, messageID)
             }
         })

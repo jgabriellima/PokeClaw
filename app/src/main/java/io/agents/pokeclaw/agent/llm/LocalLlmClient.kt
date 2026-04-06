@@ -13,7 +13,6 @@ import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.MessageCallback
 import com.google.ai.edge.litertlm.OpenApiTool
-import com.google.ai.edge.litertlm.SamplerConfig
 import com.google.ai.edge.litertlm.tool
 import io.agents.pokeclaw.agent.llm.EngineHolder
 import dev.langchain4j.agent.tool.ToolExecutionRequest
@@ -26,6 +25,7 @@ import dev.langchain4j.data.message.UserMessage
 import com.google.gson.Gson
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicReference
+import com.google.ai.edge.litertlm.Message as LiteRtMessage
 
 /**
  * LlmClient implementation using Google LiteRT-LM SDK for on-device inference.
@@ -94,11 +94,7 @@ class LocalLlmClient(private val config: AgentConfig) : LlmClient {
             ConversationConfig(
                 systemInstruction = Contents.of(systemPrompt),
                 tools = nativeTools,
-                samplerConfig = SamplerConfig(
-                    topK = 64,
-                    topP = 0.95,
-                    temperature = config.temperature
-                ),
+                samplerConfig = LiteRtSampling.fromAgentConfig(config),
                 automaticToolCalling = false  // We handle execution in DefaultAgentService
             )
         )
@@ -157,14 +153,160 @@ class LocalLlmClient(private val config: AgentConfig) : LlmClient {
         toolSpecs: List<ToolSpecification>,
         listener: StreamingListener
     ): LlmResponse {
-        // For now, delegate to blocking chat and simulate streaming
-        // LiteRT-LM streaming requires Flow or MessageCallback which needs more integration
-        val response = chat(messages, toolSpecs)
-        if (!response.text.isNullOrEmpty()) {
-            listener.onPartialText(response.text)
+        ensureEngine()
+
+        if (processedMessageCount == 0 || messages.size < processedMessageCount || sendCount >= 8) {
+            val systemPrompt = LOCAL_SYSTEM_PROMPT
+            createConversation(systemPrompt, toolSpecs)
+            sendCount = 0
+            processedMessageCount = 0
         }
+
+        val newMessages = messages.subList(
+            processedMessageCount.coerceAtMost(messages.size),
+            messages.size
+        )
+
+        var lastResponse: Any? = null
+
+        for ((msgIndex, msg) in newMessages.withIndex()) {
+            val isLastInBatch = msgIndex == newMessages.lastIndex
+            when (msg) {
+                is SystemMessage -> { }
+                is UserMessage -> {
+                    if (isLastInBatch) {
+                        val latch = CountDownLatch(1)
+                        val errorRef = AtomicReference<Throwable>(null)
+                        var textSoFar = ""
+                        var reasoningSoFar = ""
+                        conversation!!.sendMessageAsync(
+                            msg.singleText(),
+                            object : MessageCallback {
+                                override fun onMessage(message: LiteRtMessage) {
+                                    lastResponse = message
+                                    val fullText = liteRtAssistantPlainText(message)
+                                    if (fullText.length > textSoFar.length) {
+                                        listener.onPartialText(fullText.substring(textSoFar.length))
+                                        textSoFar = fullText
+                                    } else if (fullText.isNotEmpty() && fullText != textSoFar) {
+                                        listener.onPartialText(fullText)
+                                        textSoFar = fullText
+                                    }
+                                    val r = liteRtReasoningSnippet(message)
+                                    if (r.isNotEmpty() && r.length > reasoningSoFar.length) {
+                                        listener.onPartialReasoning(r.substring(reasoningSoFar.length))
+                                        reasoningSoFar = r
+                                    } else if (r.isNotEmpty() && r != reasoningSoFar) {
+                                        listener.onPartialReasoning(r)
+                                        reasoningSoFar = r
+                                    }
+                                }
+
+                                override fun onDone() {
+                                    latch.countDown()
+                                }
+
+                                override fun onError(throwable: Throwable) {
+                                    errorRef.set(throwable)
+                                    listener.onError(throwable)
+                                    latch.countDown()
+                                }
+                            },
+                            emptyMap()
+                        )
+                        latch.await()
+                        errorRef.get()?.let { throw it }
+                        sendCount++
+                    } else {
+                        XLog.d(TAG, "chatStreaming: sendMessage user (${msg.singleText().take(80)}...) sendCount=$sendCount")
+                        lastResponse = conversation!!.sendMessage(msg.singleText())
+                        sendCount++
+                    }
+                }
+                is AiMessage -> { }
+                is ToolExecutionResultMessage -> {
+                    val truncatedResult = msg.text().take(400)
+                    val toolResultText = "[Tool ${msg.toolName()} result]: $truncatedResult"
+                    if (isLastInBatch) {
+                        val latch = CountDownLatch(1)
+                        val errorRef = AtomicReference<Throwable>(null)
+                        var textSoFar = ""
+                        var reasoningSoFar = ""
+                        conversation!!.sendMessageAsync(
+                            toolResultText,
+                            object : MessageCallback {
+                                override fun onMessage(message: LiteRtMessage) {
+                                    lastResponse = message
+                                    val fullText = liteRtAssistantPlainText(message)
+                                    if (fullText.length > textSoFar.length) {
+                                        listener.onPartialText(fullText.substring(textSoFar.length))
+                                        textSoFar = fullText
+                                    } else if (fullText.isNotEmpty() && fullText != textSoFar) {
+                                        listener.onPartialText(fullText)
+                                        textSoFar = fullText
+                                    }
+                                    val r = liteRtReasoningSnippet(message)
+                                    if (r.isNotEmpty() && r.length > reasoningSoFar.length) {
+                                        listener.onPartialReasoning(r.substring(reasoningSoFar.length))
+                                        reasoningSoFar = r
+                                    } else if (r.isNotEmpty() && r != reasoningSoFar) {
+                                        listener.onPartialReasoning(r)
+                                        reasoningSoFar = r
+                                    }
+                                }
+
+                                override fun onDone() {
+                                    latch.countDown()
+                                }
+
+                                override fun onError(throwable: Throwable) {
+                                    errorRef.set(throwable)
+                                    listener.onError(throwable)
+                                    latch.countDown()
+                                }
+                            },
+                            emptyMap()
+                        )
+                        latch.await()
+                        errorRef.get()?.let { throw it }
+                        sendCount++
+                    } else {
+                        XLog.d(TAG, "chatStreaming: sendMessage toolResult (${toolResultText.take(80)}...) sendCount=$sendCount")
+                        lastResponse = conversation!!.sendMessage(toolResultText)
+                        sendCount++
+                    }
+                }
+            }
+        }
+
+        processedMessageCount = messages.size
+        val response = parseResponse(lastResponse)
         listener.onComplete(response)
         return response
+    }
+
+    /** Visible assistant text from a streaming LiteRT model message. */
+    private fun liteRtAssistantPlainText(m: LiteRtMessage): String {
+        val contents = m.contents ?: return ""
+        val parts = contents.contents ?: return m.toString()
+        val sb = StringBuilder()
+        for (part in parts) {
+            if (part is com.google.ai.edge.litertlm.Content.Text) {
+                sb.append(part.text)
+            }
+        }
+        return sb.toString().ifEmpty { m.toString() }
+    }
+
+    /** Optional thinking / reasoning channel if the runtime exposes it (e.g. enable_thinking). */
+    private fun liteRtReasoningSnippet(m: LiteRtMessage): String {
+        val ch = m.channels ?: return ""
+        val keys = listOf("thinking", "reasoning", "thought", "internal")
+        for (k in keys) {
+            val v = ch[k]?.trim().orEmpty()
+            if (v.isNotEmpty()) return v
+        }
+        return ""
     }
 
     /**

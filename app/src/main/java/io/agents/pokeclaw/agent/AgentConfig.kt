@@ -11,7 +11,12 @@ data class AgentConfig(
     val modelName: String = "",
     val systemPrompt: String = DEFAULT_SYSTEM_PROMPT,
     val maxIterations: Int = 60,
+    /** Sampling temperature (always sent for cloud; local LiteRT uses this too). */
     val temperature: Double = 0.1,
+    /** Nucleus sampling; null = omit (provider default). */
+    val topP: Double? = null,
+    /** Max output / completion tokens; null = omit (provider default). */
+    val maxOutputTokens: Int? = null,
     val provider: LlmProvider = LlmProvider.OPENAI,
     val streaming: Boolean = false
 ) {
@@ -102,6 +107,8 @@ data class AgentConfig(
         private var systemPrompt: String = DEFAULT_SYSTEM_PROMPT
         private var maxIterations: Int = 20
         private var temperature: Double = 0.1
+        private var topP: Double? = null
+        private var maxOutputTokens: Int? = null
         private var provider: LlmProvider = LlmProvider.OPENAI
         private var streaming: Boolean = false
 
@@ -111,6 +118,8 @@ data class AgentConfig(
         fun systemPrompt(systemPrompt: String) = apply { this.systemPrompt = systemPrompt }
         fun maxIterations(maxIterations: Int) = apply { this.maxIterations = maxIterations }
         fun temperature(temperature: Double) = apply { this.temperature = temperature }
+        fun topP(topP: Double?) = apply { this.topP = topP }
+        fun maxOutputTokens(maxOutputTokens: Int?) = apply { this.maxOutputTokens = maxOutputTokens }
         fun provider(provider: LlmProvider) = apply { this.provider = provider }
         fun streaming(streaming: Boolean) = apply { this.streaming = streaming }
 
@@ -118,7 +127,18 @@ data class AgentConfig(
             require(apiKey.isNotEmpty() || baseUrl.isNotEmpty()) {
                 "Either API key or base URL is required"
             }
-            return AgentConfig(apiKey, baseUrl, modelName, systemPrompt, maxIterations, temperature, provider, streaming)
+            return AgentConfig(
+                apiKey = apiKey,
+                baseUrl = baseUrl,
+                modelName = modelName,
+                systemPrompt = systemPrompt,
+                maxIterations = maxIterations,
+                temperature = temperature,
+                topP = topP,
+                maxOutputTokens = maxOutputTokens,
+                provider = provider,
+                streaming = streaming,
+            )
         }
     }
 }

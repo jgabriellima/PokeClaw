@@ -80,6 +80,12 @@ object ChatHistoryManager {
                 }
                 ChatMessage.Role.ASSISTANT -> {
                     sb.appendLine("## 🦞 Assistant")
+                    if (msg.reasoning.isNotBlank()) {
+                        sb.appendLine("```pokeclaw-reasoning")
+                        sb.appendLine(msg.reasoning.trim())
+                        sb.appendLine("```")
+                        sb.appendLine()
+                    }
                     sb.appendLine(msg.content)
                     sb.appendLine()
                 }
@@ -166,9 +172,28 @@ object ChatHistoryManager {
 
     private fun flushMessage(messages: MutableList<ChatMessage>, role: ChatMessage.Role?, content: StringBuilder) {
         if (role != null && content.isNotEmpty()) {
-            messages.add(ChatMessage(role, content.toString().trim()))
+            val raw = content.toString().trim()
             content.clear()
+            if (role == ChatMessage.Role.ASSISTANT) {
+                val (reasoning, reply) = splitAssistantSaved(raw)
+                messages.add(ChatMessage(role = role, content = reply, reasoning = reasoning))
+            } else {
+                messages.add(ChatMessage(role, raw))
+            }
         }
+    }
+
+    /**
+     * Restores optional ```pokeclaw-reasoning ... ``` block written by [save].
+     */
+    private fun splitAssistantSaved(body: String): Pair<String, String> {
+        val fence = "```pokeclaw-reasoning"
+        if (!body.startsWith(fence)) return "" to body
+        val end = body.indexOf("\n```", fence.length)
+        if (end < 0) return "" to body
+        val reasoning = body.substring(fence.length, end).trim().removePrefix("\n").trim()
+        val after = body.substring(end + 4).trim()
+        return reasoning to after
     }
 
     /**

@@ -6,8 +6,14 @@ package io.agents.pokeclaw.ui.chat
 data class ChatMessage(
     val role: Role,
     val content: String,
+    /** Model reasoning / thinking trace (e.g. Kimi reasoning_content, LiteRT enable_thinking). */
+    val reasoning: String = "",
     val timestamp: Long = System.currentTimeMillis(),
-    val toolSteps: List<ToolStep>? = null
+    val toolSteps: List<ToolStep>? = null,
+    /** In-session attachment for UI (not serialized to markdown history). JPEG bytes. */
+    val attachmentImageJpeg: ByteArray? = null,
+    /** In-session voice clip for replay in the bubble. */
+    val attachmentVoiceWav: ByteArray? = null,
 ) {
     enum class Role { USER, ASSISTANT, SYSTEM, TOOL_GROUP }
 }

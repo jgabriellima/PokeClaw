@@ -25,6 +25,7 @@ import androidx.drawerlayout.widget.DrawerLayout
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import io.agents.pokeclaw.R
+import io.agents.pokeclaw.agent.llm.LiteRtSampling
 import io.agents.pokeclaw.agent.llm.LlmClientFactory
 import io.agents.pokeclaw.agent.llm.LocalModelManager
 import dev.langchain4j.data.message.AiMessage
@@ -45,7 +46,6 @@ import com.google.ai.edge.litertlm.Conversation
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
-import com.google.ai.edge.litertlm.SamplerConfig
 import java.util.concurrent.Executors
 
 class ChatActivity : BaseActivity() {
@@ -213,7 +213,7 @@ class ChatActivity : BaseActivity() {
                     conversation = engine!!.createConversation(
                         ConversationConfig(
                             systemInstruction = Contents.of("You are a helpful AI assistant on an Android phone."),
-                            samplerConfig = SamplerConfig(topK = 64, topP = 0.95, temperature = 0.7)
+                            samplerConfig = LiteRtSampling.fromAgentConfig(appViewModel.getAgentConfig())
                         )
                     )
                     isModelReady = true
@@ -289,7 +289,7 @@ class ChatActivity : BaseActivity() {
             conversation = engine!!.createConversation(
                 ConversationConfig(
                     systemInstruction = Contents.of("You are a helpful AI assistant on an Android phone."),
-                    samplerConfig = SamplerConfig(topK = 64, topP = 0.95, temperature = 0.7)
+                    samplerConfig = LiteRtSampling.fromAgentConfig(appViewModel.getAgentConfig())
                 )
             )
 
@@ -392,7 +392,11 @@ class ChatActivity : BaseActivity() {
         setProcessing(true)
         addSystem("Starting task...")
 
-        appViewModel.startNewTask(ChannelEnum.LOCAL, text, "chat_${System.currentTimeMillis()}")
+        if (!appViewModel.startNewTask(ChannelEnum.LOCAL, text, "chat_${System.currentTimeMillis()}")) {
+            addSystem(getString(R.string.channel_msg_task_in_progress))
+            setProcessing(false)
+            return
+        }
 
         // Poll for completion
         val check = object : Runnable {
@@ -466,7 +470,7 @@ class ChatActivity : BaseActivity() {
                                 conversation = engine!!.createConversation(
                                     ConversationConfig(
                                         systemInstruction = Contents.of(systemPrompt),
-                                        samplerConfig = SamplerConfig(topK = 64, topP = 0.95, temperature = 0.7)
+                                        samplerConfig = LiteRtSampling.fromAgentConfig(appViewModel.getAgentConfig())
                                     )
                                 )
                                 isModelReady = true
@@ -501,7 +505,7 @@ class ChatActivity : BaseActivity() {
                 conversation = engine?.createConversation(
                     ConversationConfig(
                         systemInstruction = Contents.of("You are a helpful AI assistant on an Android phone."),
-                        samplerConfig = SamplerConfig(topK = 64, topP = 0.95, temperature = 0.7)
+                        samplerConfig = LiteRtSampling.fromAgentConfig(appViewModel.getAgentConfig())
                     )
                 )
                 runOnUiThread { addSystem("New conversation started.") }

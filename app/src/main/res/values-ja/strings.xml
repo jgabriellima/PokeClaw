@@ -119,6 +119,24 @@
     <string name="llm_config_saved">LLM設定を保存しました</string>
     <string name="llm_config_api_key_required">API Keyを入力してください</string>
     <string name="llm_config_model_required">モデル名を入力してください（例: gpt-4o または org/model）</string>
+    <string name="llm_config_section_sampling">サンプリング</string>
+    <string name="llm_config_temperature">温度 (temperature)</string>
+    <string name="llm_config_temperature_hint">例: 0.1 — 空欄で既定 0.1</string>
+    <string name="llm_config_top_p">Top P</string>
+    <string name="llm_config_top_p_hint">例: 0.95 — 空欄は API 既定</string>
+    <string name="llm_config_max_output_tokens">最大出力トークン</string>
+    <string name="llm_config_max_output_tokens_hint">例: 4096 — 空欄は API 既定</string>
+    <string name="llm_config_section_skills">エージェントスキル</string>
+    <string name="llm_config_skills">追加指示（Markdown）</string>
+    <string name="llm_config_skills_hint">端末操作タスクのシステムプロンプトに追記（チャット専用モードには影響しません）。</string>
+    <string name="llm_config_section_mcp">MCP ブリッジ（HTTP）</string>
+    <string name="llm_config_mcp_tip">任意: カタログ URL はツール JSON を返す、invoke URL は POST {\"name\",\"arguments\"} を受け取ります。未知のツールはそこに転送されます。</string>
+    <string name="llm_config_mcp_catalog_url">ツールカタログ URL</string>
+    <string name="llm_config_mcp_catalog_url_hint">https://your-bridge/tools.json</string>
+    <string name="llm_config_mcp_invoke_url">ツール実行 URL</string>
+    <string name="llm_config_mcp_invoke_url_hint">https://your-bridge/invoke</string>
+    <string name="llm_config_advanced_saved">サンプリング・スキル・MCP URL を保存しました</string>
+    <string name="llm_config_advanced_saved_deferred">保存しました。エージェントに反映するにはモデルを設定してください。</string>
     <string name="menu_llm_config">LLM設定</string>
 
     <!-- 設定メニュー -->
@@ -236,6 +254,30 @@
     <string name="voice_need_mic_permission">音声入力にはマイク権限が必要です。</string>
     <string name="voice_content_description_record">録音</string>
     <string name="voice_content_description_stop">録音停止</string>
+    <string name="chat_voice_recording_hint">録音中… マイクをもう一度タップで停止</string>
+    <string name="chat_voice_preview_cd">音声の再生・一時停止</string>
+    <string name="chat_discard_voice_cd">音声を破棄</string>
+    <string name="chat_voice_too_short">クリップが短すぎます</string>
+    <string name="chat_image_ready">画像を添付しました</string>
+    <string name="chat_discard_image_cd">画像を削除</string>
+    <string name="chat_image_load_failed">画像を読み込めませんでした</string>
+    <string name="chat_image_attachment_cd">添付画像</string>
+    <string name="chat_play_voice_cd">音声メッセージを再生</string>
+    <string name="chat_reasoning_label">推論</string>
+    <string name="chat_task_progress_completed">タスクが完了しました。</string>
+    <string name="chat_task_progress_cancelled">タスクがキャンセルされました。</string>
+    <string name="chat_task_progress_failed_prefix">タスクが失敗しました</string>
+    <string name="chat_task_progress_failed">タスクが失敗しました: %s</string>
+    <string name="chat_task_progress_blocked">システムダイアログが画面をブロックしている可能性があります。</string>
+    <string name="chat_stop_task">タスク停止</string>
+    <string name="chat_stop_task_cd">実行中のタスクを停止</string>
+
+    <string name="model_download_action">ダウンロード</string>
+    <string name="model_download_progress">ダウンロード中…</string>
+    <string name="model_download_cancel">ダウンロードをキャンセル</string>
+    <string name="model_download_cancelled_toast">ダウンロードをキャンセルしました</string>
+    <string name="model_download_cancel_overlay">キャンセル</string>
+    <string name="model_download_busy">別のモデルをダウンロード中です。先にその行でキャンセルしてください。</string>
 
     <!-- 入力ダイアログ -->
     <string name="input_dialog_need_more">%d文字以上入力してください</string>

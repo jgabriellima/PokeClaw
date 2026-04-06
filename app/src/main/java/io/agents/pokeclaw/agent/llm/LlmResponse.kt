@@ -9,7 +9,9 @@ import dev.langchain4j.model.output.TokenUsage
 data class LlmResponse(
     val text: String?,
     val toolExecutionRequests: List<ToolExecutionRequest>,
-    val tokenUsage: TokenUsage? = null
+    val tokenUsage: TokenUsage? = null,
+    /** Final reasoning / thinking text when the provider returns it separately (e.g. Kimi). */
+    val reasoning: String? = null
 ) {
     fun hasToolExecutionRequests(): Boolean = toolExecutionRequests.isNotEmpty()
 }

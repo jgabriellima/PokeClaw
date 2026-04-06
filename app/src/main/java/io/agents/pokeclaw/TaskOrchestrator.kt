@@ -79,18 +79,6 @@ class TaskOrchestrator(
     // ==================== 任务锁 ====================
 
     /**
-     * 原子地尝试获取任务锁。如果当前无任务在执行，则标记为占用并返回 true；否则返回 false。
-     */
-    fun tryAcquireTask(messageId: String, channel: Channel): Boolean {
-        synchronized(taskLock) {
-            if (inProgressTaskMessageId.isNotEmpty()) return false
-            inProgressTaskMessageId = messageId
-            inProgressTaskChannel = channel
-            return true
-        }
-    }
-
-    /**
      * 释放任务锁，返回释放前的 (channel, messageId) 供调用方使用。
      */
     private fun releaseTask(): Pair<Channel?, String> {
@@ -113,19 +101,42 @@ class TaskOrchestrator(
 
     fun cancelCurrentTask() {
         if (!isTaskRunning()) return
+        val app = ClawApplication.instance
         if (::agentService.isInitialized) {
             agentService.cancel()
         }
+        // Chat UI listens for this exact string to reload the model and clear processing state.
+        taskProgressCallback?.invoke(app.getString(R.string.chat_task_progress_cancelled))
         val (channel, messageId) = releaseTask()
         if (channel != null && messageId.isNotEmpty()) {
-            ChannelManager.sendMessage(channel, ClawApplication.instance.getString(R.string.channel_msg_task_cancelled), messageId)
+            ChannelManager.sendMessage(channel, app.getString(R.string.channel_msg_task_cancelled), messageId)
         }
-        FloatingCircleManager.setErrorState()
+        FloatingCircleManager.setIdleState()
+        ForegroundService.resetToIdle(app)
         onTaskFinished()
         XLog.d(TAG, "Current task cancelled by user")
     }
 
-    fun startNewTask(channel: Channel, task: String, messageID: String) {
+    private fun isTaskLockHeld(): Boolean = synchronized(taskLock) {
+        inProgressTaskMessageId.isNotEmpty()
+    }
+
+    /**
+     * Starts an agent task. Acquires the orchestrator lock first.
+     * @return false if another task is already running (remote user is notified via channel).
+     */
+    fun startNewTask(channel: Channel, task: String, messageID: String): Boolean {
+        val app = ClawApplication.instance
+        synchronized(taskLock) {
+            if (inProgressTaskMessageId.isNotEmpty()) {
+                ChannelManager.sendMessage(channel, app.getString(R.string.channel_msg_task_in_progress), messageID)
+                ChannelManager.flushMessages(channel)
+                return false
+            }
+            inProgressTaskMessageId = messageID
+            inProgressTaskChannel = channel
+        }
+
         if (!::agentService.isInitialized) {
             XLog.e(TAG, "AgentService not initialized, attempting to initialize")
             try {
@@ -134,8 +145,8 @@ class TaskOrchestrator(
             } catch (e: Exception) {
                 XLog.e(TAG, "Failed to initialize AgentService", e)
                 releaseTask()
-                ChannelManager.sendMessage(channel, ClawApplication.instance.getString(R.string.channel_msg_service_not_ready), messageID)
-                return
+                ChannelManager.sendMessage(channel, app.getString(R.string.channel_msg_service_not_ready), messageID)
+                return false
             }
         }
 
@@ -207,48 +218,80 @@ class TaskOrchestrator(
 
             override fun onComplete(round: Int, finalAnswer: String, totalTokens: Int) {
                 XLog.i(TAG, "onComplete: 轮数=$round, totalTokens=$totalTokens, answer=$finalAnswer")
-                taskProgressCallback?.invoke("Task completed.")
-                ForegroundService.resetToIdle(ClawApplication.instance)
-                flushRoundBuffer()
-                releaseTask()
-                ChannelManager.flushMessages(channel)
-                FloatingCircleManager.setSuccessState()
-                onTaskFinished()
+                val app = ClawApplication.instance
+                val held = isTaskLockHeld()
+                val progressMsg =
+                    if (finalAnswer == app.getString(R.string.agent_task_cancel)) {
+                        app.getString(R.string.chat_task_progress_cancelled)
+                    } else {
+                        app.getString(R.string.chat_task_progress_completed)
+                    }
+                if (held) {
+                    taskProgressCallback?.invoke(progressMsg)
+                    ForegroundService.resetToIdle(app)
+                    flushRoundBuffer()
+                    releaseTask()
+                    ChannelManager.flushMessages(channel)
+                    FloatingCircleManager.setSuccessState()
+                    onTaskFinished()
+                } else {
+                    // Lock already released (e.g. user tapped Stop); avoid duplicate progress + channel work.
+                    ForegroundService.resetToIdle(app)
+                    flushRoundBuffer()
+                    onTaskFinished()
+                }
             }
 
             override fun onError(round: Int, error: Exception, totalTokens: Int) {
                 XLog.e(TAG, "onError: ${error.message}, totalTokens=$totalTokens", error)
-                taskProgressCallback?.invoke("Task failed: ${error.message}")
-                ForegroundService.resetToIdle(ClawApplication.instance)
-                flushRoundBuffer()
-                releaseTask()
-                ChannelManager.sendMessage(channel, ClawApplication.instance.getString(R.string.channel_msg_task_error, error.message), messageID)
-                ChannelManager.flushMessages(channel)
-                FloatingCircleManager.setErrorState()
-                onTaskFinished()
+                val app = ClawApplication.instance
+                val held = isTaskLockHeld()
+                if (held) {
+                    taskProgressCallback?.invoke(app.getString(R.string.chat_task_progress_failed, error.message ?: ""))
+                    ForegroundService.resetToIdle(app)
+                    flushRoundBuffer()
+                    releaseTask()
+                    ChannelManager.sendMessage(channel, app.getString(R.string.channel_msg_task_error, error.message), messageID)
+                    ChannelManager.flushMessages(channel)
+                    FloatingCircleManager.setErrorState()
+                    onTaskFinished()
+                } else {
+                    ForegroundService.resetToIdle(app)
+                    flushRoundBuffer()
+                    onTaskFinished()
+                }
             }
 
             override fun onSystemDialogBlocked(round: Int, totalTokens: Int) {
                 XLog.w(TAG, "onSystemDialogBlocked: round=$round, totalTokens=$totalTokens")
-                taskProgressCallback?.invoke("Blocked by system dialog.")
-                flushRoundBuffer()
-                releaseTask()
-                ChannelManager.sendMessage(channel, ClawApplication.instance.getString(R.string.channel_msg_system_dialog_blocked), messageID)
-                try {
-                    val service = ClawAccessibilityService.getInstance()
-                    val bitmap = service?.takeScreenshot(5000)
-                    if (bitmap != null) {
-                        val stream = java.io.ByteArrayOutputStream()
-                        bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 80, stream)
-                        bitmap.recycle()
-                        ChannelManager.sendImage(channel, stream.toByteArray(), messageID)
+                val app = ClawApplication.instance
+                val held = isTaskLockHeld()
+                if (held) {
+                    taskProgressCallback?.invoke(app.getString(R.string.chat_task_progress_blocked))
+                    ForegroundService.resetToIdle(app)
+                    flushRoundBuffer()
+                    releaseTask()
+                    ChannelManager.sendMessage(channel, app.getString(R.string.channel_msg_system_dialog_blocked), messageID)
+                    try {
+                        val service = ClawAccessibilityService.getInstance()
+                        val bitmap = service?.takeScreenshot(5000)
+                        if (bitmap != null) {
+                            val stream = java.io.ByteArrayOutputStream()
+                            bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 80, stream)
+                            bitmap.recycle()
+                            ChannelManager.sendImage(channel, stream.toByteArray(), messageID)
+                        }
+                    } catch (e: Exception) {
+                        XLog.e(TAG, "Failed to send screenshot for system dialog", e)
                     }
-                } catch (e: Exception) {
-                    XLog.e(TAG, "Failed to send screenshot for system dialog", e)
+                    FloatingCircleManager.setErrorState()
+                    onTaskFinished()
+                } else {
+                    ForegroundService.resetToIdle(app)
+                    onTaskFinished()
                 }
-                FloatingCircleManager.setErrorState()
-                onTaskFinished()
             }
         })
+        return true
     }
 }

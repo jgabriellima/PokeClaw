@@ -6,11 +6,14 @@ package io.agents.pokeclaw.agent.llm
 import android.content.Context
 import io.agents.pokeclaw.utils.KVUtils
 import io.agents.pokeclaw.utils.XLog
+import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Manages on-device LLM model downloads and storage.
@@ -71,6 +74,23 @@ object LocalModelManager {
         fun onProgress(bytesDownloaded: Long, totalBytes: Long, bytesPerSecond: Long)
         fun onComplete(modelPath: String)
         fun onError(error: String)
+        fun onCancelled() {}
+    }
+
+    /**
+     * Cancels an in-flight [downloadModel] (OkHttp [Call.cancel] + cooperative checks).
+     * Safe to call from any thread; no-op if the download already finished.
+     */
+    class DownloadHandle {
+        private val cancelled = AtomicBoolean(false)
+        internal val callRef = AtomicReference<Call?>(null)
+
+        fun cancel() {
+            cancelled.set(true)
+            callRef.get()?.cancel()
+        }
+
+        internal fun isCancelled(): Boolean = cancelled.get()
     }
 
     /**
@@ -107,15 +127,19 @@ object LocalModelManager {
      * Supports resume via HTTP Range headers for partial downloads.
      *
      * Must be called from a background thread.
+     *
+     * @param handle Pass [DownloadHandle]; call [DownloadHandle.cancel] from the UI to stop.
      */
     fun downloadModel(
         context: Context,
         model: ModelInfo,
-        callback: DownloadCallback
+        callback: DownloadCallback,
+        handle: DownloadHandle = DownloadHandle()
     ) {
         val modelDir = getModelDir(context)
         val targetFile = File(modelDir, model.fileName)
         val tempFile = File(modelDir, "${model.fileName}.downloading")
+        var call: Call? = null
 
         try {
             val client = OkHttpClient.Builder()
@@ -132,7 +156,22 @@ object LocalModelManager {
                 XLog.i(TAG, "Resuming download from byte $existingBytes")
             }
 
-            val response = client.newCall(requestBuilder.build()).execute()
+            call = client.newCall(requestBuilder.build())
+            handle.callRef.set(call)
+
+            if (handle.isCancelled()) {
+                XLog.i(TAG, "Download aborted before start")
+                callback.onCancelled()
+                return
+            }
+
+            val response = call.execute()
+
+            if (handle.isCancelled() || call.isCanceled()) {
+                XLog.i(TAG, "Download cancelled after headers")
+                callback.onCancelled()
+                return
+            }
 
             if (!response.isSuccessful && response.code != 206) {
                 callback.onError("Download failed: HTTP ${response.code}")
@@ -161,6 +200,12 @@ object LocalModelManager {
             body.byteStream().use { input ->
                 outputStream.use { output ->
                     while (true) {
+                        if (handle.isCancelled()) {
+                            call.cancel()
+                            XLog.i(TAG, "Download cancelled during read")
+                            callback.onCancelled()
+                            return
+                        }
                         val bytesRead = input.read(buffer)
                         if (bytesRead == -1) break
                         output.write(buffer, 0, bytesRead)
@@ -178,6 +223,11 @@ object LocalModelManager {
                 }
             }
 
+            if (handle.isCancelled() || call.isCanceled()) {
+                callback.onCancelled()
+                return
+            }
+
             // Rename temp to final
             if (targetFile.exists()) targetFile.delete()
             tempFile.renameTo(targetFile)
@@ -187,10 +237,14 @@ object LocalModelManager {
 
             XLog.i(TAG, "Model downloaded: ${targetFile.absolutePath} (${targetFile.length()} bytes)")
             callback.onComplete(targetFile.absolutePath)
-
         } catch (e: Exception) {
-            XLog.e(TAG, "Download failed", e)
-            callback.onError("Download failed: ${e.message}")
+            if (handle.isCancelled() || call?.isCanceled() == true) {
+                XLog.i(TAG, "Download cancelled: ${e.message}")
+                callback.onCancelled()
+            } else {
+                XLog.e(TAG, "Download failed", e)
+                callback.onError("Download failed: ${e.message}")
+            }
         }
     }
 

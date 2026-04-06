@@ -5,6 +5,9 @@ package io.agents.pokeclaw.agent.llm
 
 interface StreamingListener {
     fun onPartialText(token: String)
+    /** Cumulative or delta chunks from provider thinking stream (OpenAI-compatible reasoning). */
+    fun onPartialReasoning(chunk: String) {}
+
     fun onComplete(response: LlmResponse)
     fun onError(error: Throwable)
 }

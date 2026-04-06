@@ -71,10 +71,32 @@ class AppViewModel : ViewModel() {
             .apiKey(KVUtils.getLlmApiKey())
             .baseUrl(baseUrl)
             .modelName(KVUtils.getLlmModelName())
-            .temperature(0.1)
+            .temperature(parseTemperatureFromKv())
+            .topP(parseTopPFromKv())
+            .maxOutputTokens(parseMaxOutputTokensFromKv())
             .maxIterations(60)
             .provider(provider)
             .build()
+    }
+
+    private fun parseTemperatureFromKv(): Double {
+        val s = KVUtils.getLlmTemperatureString()
+        if (s.isBlank()) return 0.1
+        return s.toDoubleOrNull()?.coerceIn(0.0, 2.0) ?: 0.1
+    }
+
+    /** Empty KV → omit (provider default). */
+    private fun parseTopPFromKv(): Double? {
+        val s = KVUtils.getLlmTopPString()
+        if (s.isBlank()) return null
+        return s.toDoubleOrNull()?.coerceIn(0.001, 1.0)
+    }
+
+    /** Empty KV → omit (provider default). */
+    private fun parseMaxOutputTokensFromKv(): Int? {
+        val s = KVUtils.getLlmMaxOutputTokensString()
+        if (s.isBlank()) return null
+        return s.toIntOrNull()?.takeIf { it > 0 }?.coerceAtMost(200_000)
     }
 
     fun updateAgentConfig(): Boolean = taskOrchestrator.updateAgentConfig()
@@ -153,20 +175,15 @@ class AppViewModel : ViewModel() {
 
     fun cancelCurrentTask() = taskOrchestrator.cancelCurrentTask()
 
-    fun startNewTask(channel: Channel, task: String, messageID: String) =
+    fun startNewTask(channel: Channel, task: String, messageID: String): Boolean =
         taskOrchestrator.startNewTask(channel, task, messageID)
 
     /**
-     * Starts a LOCAL agent task only if the orchestrator lock is free (used by scheduled alarms).
+     * Starts a LOCAL agent task (used by scheduled alarms).
      * @return false if another task is already running.
      */
-    fun startLocalScheduledTask(task: String, messageId: String): Boolean {
-        if (!taskOrchestrator.tryAcquireTask(messageId, Channel.LOCAL)) {
-            return false
-        }
+    fun startLocalScheduledTask(task: String, messageId: String): Boolean =
         taskOrchestrator.startNewTask(Channel.LOCAL, task, messageId)
-        return true
-    }
 
     private fun trySendScreenshot(channel: Channel, filePath: String, messageID: String) {
         try {

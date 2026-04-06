@@ -13,6 +13,7 @@ import dev.langchain4j.model.chat.ChatModel
 import dev.langchain4j.model.chat.StreamingChatModel
 import dev.langchain4j.model.chat.request.ChatRequest
 import dev.langchain4j.model.chat.response.ChatResponse
+import dev.langchain4j.model.chat.response.PartialThinking
 import dev.langchain4j.model.chat.response.StreamingChatResponseHandler
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicReference
@@ -31,6 +32,8 @@ class AnthropicLlmClient(
             .apiKey(config.apiKey)
             .modelName(config.modelName)
             .temperature(config.temperature)
+        config.topP?.let { builder.topP(it) }
+        config.maxOutputTokens?.let { builder.maxTokens(it) }
         if (config.baseUrl.isNotEmpty()) {
             builder.baseUrl(config.baseUrl)
         }
@@ -43,6 +46,8 @@ class AnthropicLlmClient(
             .apiKey(config.apiKey)
             .modelName(config.modelName)
             .temperature(config.temperature)
+        config.topP?.let { builder.topP(it) }
+        config.maxOutputTokens?.let { builder.maxTokens(it) }
         if (config.baseUrl.isNotEmpty()) {
             builder.baseUrl(config.baseUrl)
         }
@@ -75,6 +80,11 @@ class AnthropicLlmClient(
         streamingChatModel.chat(request, object : StreamingChatResponseHandler {
             override fun onPartialResponse(token: String) {
                 listener.onPartialText(token)
+            }
+
+            override fun onPartialThinking(partialThinking: PartialThinking) {
+                val t = partialThinking.text()
+                if (t.isNotEmpty()) listener.onPartialReasoning(t)
             }
 
             override fun onCompleteResponse(response: ChatResponse) {

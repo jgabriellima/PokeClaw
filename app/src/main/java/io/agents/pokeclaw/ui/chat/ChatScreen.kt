@@ -3,7 +3,9 @@
 
 package io.agents.pokeclaw.ui.chat
 
+import android.graphics.BitmapFactory
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -21,6 +23,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import io.agents.pokeclaw.R
 import androidx.compose.ui.graphics.Color
@@ -82,12 +86,30 @@ fun ChatScreen(
     modelStatus: String,
     needsPermission: Boolean,
     isProcessing: Boolean,
+    /** Phone agent task in progress — shows Stop in the top bar. */
+    taskRunning: Boolean = false,
+    onStopTask: () -> Unit = {},
     isDownloading: Boolean = false,
     downloadProgress: Int = 0,
+    /** When non-null and [isDownloading], overlay shows a cancel control (e.g. bind to [LocalModelManager.DownloadHandle.cancel]). */
+    onCancelModelDownload: (() -> Unit)? = null,
     draftText: String,
     onDraftTextChange: (String) -> Unit,
     isVoiceRecording: Boolean,
+    /** Live RMS samples (0..1) while recording; used for the input-area waveform. */
+    voiceRecordingLevels: List<Float> = emptyList(),
+    /** Non-null after stop recording, before send/discard. */
+    voiceDraftWav: ByteArray? = null,
+    voiceDraftWaveform: List<Float> = emptyList(),
+    voicePreviewPlaying: Boolean = false,
+    voiceDraftDurationLabel: String = "",
     onVoiceToggle: () -> Unit,
+    onVoiceDraftPlayPause: () -> Unit = {},
+    onVoiceDraftDiscard: () -> Unit = {},
+    imageAttachmentJpeg: ByteArray? = null,
+    onImageAttachmentClear: () -> Unit = {},
+    /** Replay a voice clip from a user bubble (shared player in Activity). */
+    onPlayMessageVoice: (ByteArray) -> Unit = {},
     onSendChat: (String, ByteArray?) -> Unit,
     onSendTask: (String) -> Unit,
     onNewChat: () -> Unit,
@@ -144,6 +166,8 @@ fun ChatScreen(
                     onMenuClick = { scope.launch { drawerState.open() } },
                     onNewChat = onNewChat,
                     onSettings = onOpenSettings,
+                    taskRunning = taskRunning,
+                    onStopTask = onStopTask,
                     colors = colors,
                 )
             },
@@ -154,7 +178,16 @@ fun ChatScreen(
                         onTextChange = onDraftTextChange,
                         isProcessing = isProcessing,
                         isVoiceRecording = isVoiceRecording,
+                        voiceRecordingLevels = voiceRecordingLevels,
+                        voiceDraftWav = voiceDraftWav,
+                        voiceDraftWaveform = voiceDraftWaveform,
+                        voicePreviewPlaying = voicePreviewPlaying,
+                        voiceDraftDurationLabel = voiceDraftDurationLabel,
                         onVoiceToggle = onVoiceToggle,
+                        onVoiceDraftPlayPause = onVoiceDraftPlayPause,
+                        onVoiceDraftDiscard = onVoiceDraftDiscard,
+                        imageAttachmentJpeg = imageAttachmentJpeg,
+                        onImageAttachmentClear = onImageAttachmentClear,
                         onSendChat = onSendChat,
                         onSendTask = onSendTask,
                         onAttach = onAttach,
@@ -186,13 +219,18 @@ fun ChatScreen(
                     MessageList(
                         messages = messages,
                         colors = colors,
+                        onPlayMessageVoice = onPlayMessageVoice,
                         modifier = Modifier.fillMaxSize(),
                     )
                 }
 
                 // Download blocking overlay
                 if (isDownloading) {
-                    DownloadOverlay(progress = downloadProgress, colors = colors)
+                    DownloadOverlay(
+                        progress = downloadProgress,
+                        colors = colors,
+                        onCancel = onCancelModelDownload,
+                    )
                 }
             }
         }
@@ -208,6 +246,8 @@ private fun ChatTopBar(
     onMenuClick: () -> Unit,
     onNewChat: () -> Unit,
     onSettings: () -> Unit,
+    taskRunning: Boolean,
+    onStopTask: () -> Unit,
     colors: PokeclawColors,
 ) {
     Column {
@@ -225,6 +265,26 @@ private fun ChatTopBar(
                 }
             },
             actions = {
+                if (taskRunning) {
+                    TextButton(
+                        onClick = onStopTask,
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error,
+                        ),
+                    ) {
+                        Icon(
+                            Icons.Filled.Stop,
+                            contentDescription = stringResource(R.string.chat_stop_task_cd),
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            stringResource(R.string.chat_stop_task),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                }
                 IconButton(onClick = onNewChat) {
                     Icon(Icons.Default.Edit, contentDescription = "New Chat")
                 }
@@ -290,12 +350,14 @@ private fun PermissionBanner(onClick: () -> Unit, colors: PokeclawColors) {
 private fun MessageList(
     messages: List<ChatMessage>,
     colors: PokeclawColors,
+    onPlayMessageVoice: (ByteArray) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(messages.size) {
+    val lastAssistant = messages.lastOrNull { it.role == ChatMessage.Role.ASSISTANT }
+    LaunchedEffect(messages.size, lastAssistant?.content, lastAssistant?.reasoning) {
         if (messages.isNotEmpty()) {
             scope.launch { listState.animateScrollToItem(messages.size - 1) }
         }
@@ -309,8 +371,12 @@ private fun MessageList(
         items(messages.size) { index ->
             val message = messages[index]
             when (message.role) {
-                ChatMessage.Role.USER -> UserBubble(message.content, colors)
-                ChatMessage.Role.ASSISTANT -> AssistantBubble(message.content, colors)
+                ChatMessage.Role.USER -> UserBubble(message, colors, onPlayMessageVoice)
+                ChatMessage.Role.ASSISTANT -> AssistantBubble(
+                    text = message.content,
+                    reasoning = message.reasoning,
+                    colors = colors,
+                )
                 ChatMessage.Role.SYSTEM -> SystemMessage(message.content, colors)
                 ChatMessage.Role.TOOL_GROUP -> ToolGroup(message, colors)
             }
@@ -321,36 +387,107 @@ private fun MessageList(
 // ======================== BUBBLES ========================
 
 @Composable
-private fun UserBubble(text: String, colors: PokeclawColors) {
-    Row(
+private fun UserBubble(
+    message: ChatMessage,
+    colors: PokeclawColors,
+    onPlayVoice: (ByteArray) -> Unit,
+) {
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 64.dp, end = 14.dp, top = 3.dp, bottom = 3.dp),
-        horizontalArrangement = Arrangement.End,
+            .padding(start = 48.dp, end = 14.dp, top = 3.dp, bottom = 3.dp),
+        horizontalAlignment = Alignment.End,
     ) {
-        Surface(
-            color = colors.userBubble,
-            shape = RoundedCornerShape(20.dp, 20.dp, 4.dp, 20.dp),
+        message.attachmentImageJpeg?.let { jpeg ->
+            val bitmap = remember(jpeg.contentHashCode()) {
+                BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)
+            }
+            bitmap?.let { bmp ->
+                Image(
+                    bitmap = bmp.asImageBitmap(),
+                    contentDescription = stringResource(R.string.chat_image_attachment_cd),
+                    modifier = Modifier
+                        .widthIn(max = 220.dp)
+                        .heightIn(max = 220.dp)
+                        .clip(RoundedCornerShape(12.dp)),
+                    contentScale = ContentScale.Fit,
+                )
+                Spacer(Modifier.height(6.dp))
+            }
+        }
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.End,
         ) {
-            Text(
-                text = text,
-                color = colors.userText,
-                fontSize = 15.sp,
-                lineHeight = 21.sp,
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            message.attachmentVoiceWav?.let { wav ->
+                IconButton(
+                    onClick = { onPlayVoice(wav) },
+                    modifier = Modifier.size(40.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.PlayArrow,
+                        contentDescription = stringResource(R.string.chat_play_voice_cd),
+                        tint = colors.accent,
+                    )
+                }
+            }
+            Surface(
+                color = colors.userBubble,
+                shape = RoundedCornerShape(20.dp, 20.dp, 4.dp, 20.dp),
+            ) {
+                Text(
+                    text = message.content,
+                    color = colors.userText,
+                    fontSize = 15.sp,
+                    lineHeight = 21.sp,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun WaveformBarRow(
+    samples: List<Float>,
+    colors: PokeclawColors,
+    progressFraction: Float? = null,
+    modifier: Modifier = Modifier,
+) {
+    val n = samples.size.coerceAtLeast(1)
+    Row(
+        modifier = modifier
+            .height(40.dp)
+            .fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        samples.forEachIndexed { i, h ->
+            val frac = (i + 1).toFloat() / n
+            val lit = progressFraction != null && frac <= progressFraction!!
+            val barH = (4f + h.coerceIn(0f, 1f) * 28f).dp
+            Box(
+                Modifier
+                    .width(3.dp)
+                    .height(barH)
+                    .clip(RoundedCornerShape(1.dp))
+                    .background(
+                        if (lit) colors.accent
+                        else colors.textTertiary.copy(alpha = 0.45f),
+                    ),
             )
         }
     }
 }
 
 @Composable
-private fun AssistantBubble(text: String, colors: PokeclawColors) {
+private fun AssistantBubble(text: String, reasoning: String, colors: PokeclawColors) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = 14.dp, end = 64.dp, top = 3.dp, bottom = 3.dp),
         horizontalArrangement = Arrangement.Start,
-        verticalAlignment = Alignment.Bottom,
+        verticalAlignment = Alignment.Top,
     ) {
         // Avatar
         androidx.compose.foundation.Image(
@@ -362,32 +499,57 @@ private fun AssistantBubble(text: String, colors: PokeclawColors) {
         )
         Spacer(Modifier.width(8.dp))
 
-        // Bubble
-        if (text == "...") {
-            // Typing indicator
-            Surface(
-                color = colors.aiBubble,
-                shape = RoundedCornerShape(20.dp, 20.dp, 20.dp, 4.dp),
-                border = androidx.compose.foundation.BorderStroke(0.5.dp, colors.aiBubbleBorder),
-            ) {
-                TypingIndicator(
-                    color = colors.textTertiary,
-                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
-                )
+        Column(modifier = Modifier.weight(1f, fill = false)) {
+            if (reasoning.isNotBlank()) {
+                Surface(
+                    color = colors.surface,
+                    shape = RoundedCornerShape(12.dp),
+                    border = androidx.compose.foundation.BorderStroke(0.5.dp, colors.divider),
+                ) {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        Text(
+                            text = stringResource(R.string.chat_reasoning_label),
+                            color = colors.textTertiary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = reasoning,
+                            color = colors.textSecondary,
+                            fontSize = 13.sp,
+                            lineHeight = 18.sp,
+                            modifier = Modifier.padding(top = 4.dp),
+                        )
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
             }
-        } else {
-            Surface(
-                color = colors.aiBubble,
-                shape = RoundedCornerShape(20.dp, 20.dp, 20.dp, 4.dp),
-                border = androidx.compose.foundation.BorderStroke(0.5.dp, colors.aiBubbleBorder),
-            ) {
-                Text(
-                    text = text,
-                    color = colors.aiText,
-                    fontSize = 15.sp,
-                    lineHeight = 21.sp,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                )
+            // Bubble
+            if (text == "...") {
+                Surface(
+                    color = colors.aiBubble,
+                    shape = RoundedCornerShape(20.dp, 20.dp, 20.dp, 4.dp),
+                    border = androidx.compose.foundation.BorderStroke(0.5.dp, colors.aiBubbleBorder),
+                ) {
+                    TypingIndicator(
+                        color = colors.textTertiary,
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+                    )
+                }
+            } else {
+                Surface(
+                    color = colors.aiBubble,
+                    shape = RoundedCornerShape(20.dp, 20.dp, 20.dp, 4.dp),
+                    border = androidx.compose.foundation.BorderStroke(0.5.dp, colors.aiBubbleBorder),
+                ) {
+                    Text(
+                        text = text,
+                        color = colors.aiText,
+                        fontSize = 15.sp,
+                        lineHeight = 21.sp,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    )
+                }
             }
         }
     }
@@ -467,7 +629,16 @@ private fun ChatInputBar(
     onTextChange: (String) -> Unit,
     isProcessing: Boolean,
     isVoiceRecording: Boolean,
+    voiceRecordingLevels: List<Float>,
+    voiceDraftWav: ByteArray?,
+    voiceDraftWaveform: List<Float>,
+    voicePreviewPlaying: Boolean,
+    voiceDraftDurationLabel: String,
     onVoiceToggle: () -> Unit,
+    onVoiceDraftPlayPause: () -> Unit,
+    onVoiceDraftDiscard: () -> Unit,
+    imageAttachmentJpeg: ByteArray?,
+    onImageAttachmentClear: () -> Unit,
     onSendChat: (String, ByteArray?) -> Unit,
     onSendTask: (String) -> Unit,
     onAttach: () -> Unit,
@@ -494,6 +665,106 @@ private fun ChatInputBar(
             .navigationBarsPadding(),
     ) {
         HorizontalDivider(color = colors.divider, thickness = 0.5.dp)
+
+        val showVoiceStrip = isVoiceRecording || voiceDraftWav != null
+        val showImageStrip = imageAttachmentJpeg != null
+        if (showVoiceStrip || showImageStrip) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+            ) {
+                if (showImageStrip) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(bottom = if (showVoiceStrip) 8.dp else 0.dp),
+                    ) {
+                        imageAttachmentJpeg?.let { jpeg ->
+                            val bmp = remember(jpeg.contentHashCode()) {
+                                BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)
+                            }
+                            bmp?.let {
+                                Image(
+                                    bitmap = it.asImageBitmap(),
+                                    contentDescription = null,
+                                    modifier = Modifier
+                                        .size(56.dp)
+                                        .clip(RoundedCornerShape(8.dp)),
+                                    contentScale = ContentScale.Crop,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            stringResource(R.string.chat_image_ready),
+                            color = colors.textSecondary,
+                            fontSize = 13.sp,
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(onClick = onImageAttachmentClear) {
+                            Icon(Icons.Outlined.Close, contentDescription = stringResource(R.string.chat_discard_image_cd), tint = colors.textSecondary)
+                        }
+                    }
+                }
+                if (showVoiceStrip) {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = colors.background),
+                        shape = RoundedCornerShape(12.dp),
+                    ) {
+                        Column(Modifier.padding(10.dp)) {
+                            if (isVoiceRecording) {
+                                Text(
+                                    stringResource(R.string.chat_voice_recording_hint),
+                                    color = colors.accent,
+                                    fontSize = 12.sp,
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                val live = if (voiceRecordingLevels.isEmpty()) {
+                                    List(40) { 0.08f }
+                                } else {
+                                    voiceRecordingLevels.takeLast(48)
+                                }
+                                WaveformBarRow(live, colors, modifier = Modifier.fillMaxWidth())
+                            } else {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    IconButton(onClick = onVoiceDraftPlayPause) {
+                                        Icon(
+                                            if (voicePreviewPlaying) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                                            contentDescription = stringResource(R.string.chat_voice_preview_cd),
+                                            tint = colors.accent,
+                                        )
+                                    }
+                                    Column(Modifier.weight(1f)) {
+                                        WaveformBarRow(
+                                            samples = if (voiceDraftWaveform.isNotEmpty()) voiceDraftWaveform else List(32) { 0.1f },
+                                            colors = colors,
+                                            modifier = Modifier.fillMaxWidth(),
+                                        )
+                                        if (voiceDraftDurationLabel.isNotEmpty()) {
+                                            Text(
+                                                voiceDraftDurationLabel,
+                                                fontSize = 11.sp,
+                                                color = colors.textTertiary,
+                                            )
+                                        }
+                                    }
+                                    IconButton(onClick = onVoiceDraftDiscard) {
+                                        Icon(
+                                            Icons.Outlined.DeleteOutline,
+                                            contentDescription = stringResource(R.string.chat_discard_voice_cd),
+                                            tint = colors.textSecondary,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // Mode toggle tabs — Material Icons, no emoji
         Row(
@@ -533,9 +804,13 @@ private fun ChatInputBar(
                     modifier = Modifier.size(40.dp),
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Mic,
+                        imageVector = if (isVoiceRecording) Icons.Filled.Stop else Icons.Default.Mic,
                         contentDescription = stringResource(R.string.voice_content_description_record),
-                        tint = if (isVoiceRecording) MaterialTheme.colorScheme.error else colors.textSecondary,
+                        tint = when {
+                            isVoiceRecording -> MaterialTheme.colorScheme.error
+                            voiceDraftWav != null -> colors.textTertiary
+                            else -> colors.textSecondary
+                        },
                         modifier = Modifier.size(22.dp),
                     )
                 }
@@ -584,22 +859,28 @@ private fun ChatInputBar(
             Spacer(Modifier.width(4.dp))
 
             // Send button
+            val canSendChat = !isTaskMode && !isProcessing &&
+                (text.isNotBlank() || voiceDraftWav != null || imageAttachmentJpeg != null)
             FloatingActionButton(
                 onClick = {
-                    if (text.isNotBlank()) {
-                        if (isTaskMode) {
+                    if (isTaskMode) {
+                        if (text.isNotBlank()) {
                             onSendTask(text.trim())
                             onTextChange("")
                             focusManager.clearFocus()
-                        } else if (!isProcessing) {
-                            onSendChat(text.trim(), null)
-                            onTextChange("")
-                            focusManager.clearFocus()
                         }
+                    } else if (canSendChat) {
+                        onSendChat(text.trim(), voiceDraftWav)
+                        onTextChange("")
+                        focusManager.clearFocus()
                     }
                 },
                 modifier = Modifier.size(36.dp),
-                containerColor = if (text.isBlank()) colors.accent.copy(alpha = 0.4f) else colors.accent,
+                containerColor = if (isTaskMode) {
+                    if (text.isBlank()) colors.accent.copy(alpha = 0.4f) else colors.accent
+                } else {
+                    if (canSendChat) colors.accent else colors.accent.copy(alpha = 0.4f)
+                },
                 shape = CircleShape,
                 elevation = FloatingActionButtonDefaults.elevation(defaultElevation = 0.dp),
             ) {
@@ -654,7 +935,11 @@ private fun ModeTab(
 // ======================== DOWNLOAD OVERLAY ========================
 
 @Composable
-private fun DownloadOverlay(progress: Int, colors: PokeclawColors) {
+private fun DownloadOverlay(
+    progress: Int,
+    colors: PokeclawColors,
+    onCancel: (() -> Unit)? = null,
+) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -709,6 +994,18 @@ private fun DownloadOverlay(progress: Int, colors: PokeclawColors) {
                     fontWeight = FontWeight.Bold,
                     color = colors.accent,
                 )
+                if (onCancel != null) {
+                    Spacer(Modifier.height(20.dp))
+                    OutlinedButton(
+                        onClick = onCancel,
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.textSecondary),
+                    ) {
+                        Text(
+                            stringResource(R.string.model_download_cancel_overlay),
+                            fontSize = 14.sp,
+                        )
+                    }
+                }
             }
         }
     }

@@ -9,6 +9,9 @@ import android.view.WindowManager
 import io.agents.pokeclaw.ClawApplication
 import io.agents.pokeclaw.R
 import io.agents.pokeclaw.agent.langchain.LangChain4jToolBridge
+import io.agents.pokeclaw.agent.mcp.RemoteMcpToolCatalog
+import io.agents.pokeclaw.agent.mcp.RemoteMcpToolInvoker
+import io.agents.pokeclaw.utils.KVUtils
 import io.agents.pokeclaw.agent.llm.LlmClient
 import io.agents.pokeclaw.agent.llm.LlmClientFactory
 import io.agents.pokeclaw.agent.llm.LlmResponse
@@ -76,9 +79,16 @@ class DefaultAgentService : AgentService {
     override fun initialize(config: AgentConfig) {
         this.config = config
         this.llmClient = LlmClientFactory.create(config)
-        this.toolSpecs = LangChain4jToolBridge.buildToolSpecifications()
+        RemoteMcpToolInvoker.configure(KVUtils.getMcpInvokeUrl())
+        val localSpecs = LangChain4jToolBridge.buildToolSpecifications()
+        val remoteSpecs = RemoteMcpToolCatalog.fetch(KVUtils.getMcpCatalogUrl())
+        this.toolSpecs = localSpecs + remoteSpecs
         this.executor = Executors.newSingleThreadExecutor()
-        XLog.i(TAG, "Agent initialized: provider=${config.provider}, model=${config.modelName}, streaming=${config.streaming}")
+        XLog.i(
+            TAG,
+            "Agent initialized: provider=${config.provider}, model=${config.modelName}, streaming=${config.streaming}, " +
+                "remoteTools=${remoteSpecs.size}, mcpInvoke=${RemoteMcpToolInvoker.isConfigured()}",
+        )
     }
 
     override fun updateConfig(config: AgentConfig) {
@@ -355,8 +365,14 @@ class DefaultAgentService : AgentService {
             return
         }
 
-        // 构建 System Prompt（原始 + 设备上下文）
-        val fullSystemPrompt = config.systemPrompt + buildDeviceContext()
+        // 构建 System Prompt（原始 + 设备上下文 + 用户 skills / 附加说明）
+        val skills = KVUtils.getLlmSkillsMarkdown().trim()
+        val skillsBlock = if (skills.isNotEmpty()) {
+            "\n\n## Additional instructions (user skills)\n$skills"
+        } else {
+            ""
+        }
+        val fullSystemPrompt = config.systemPrompt + buildDeviceContext() + skillsBlock
 
         val messages = mutableListOf<ChatMessage>()
         messages.add(SystemMessage.from(fullSystemPrompt))
