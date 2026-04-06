@@ -8,12 +8,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 if ! command -v gh >/dev/null 2>&1; then
-  echo "gh (GitHub CLI) not found. Install it and run: gh auth login" >&2
+  echo "GitHub CLI (gh) not found. Install it, then sign in: gh auth login" >&2
   exit 1
 fi
 
 if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
-  echo "Working tree is not clean — commit or stash before make release." >&2
+  echo "Your working tree still has uncommitted or staged changes." >&2
+  echo "Commit everything you want in this release (or stash it), then run: make release" >&2
   exit 1
 fi
 
@@ -23,7 +24,7 @@ git fetch "$GIT_REMOTE" --tags 2>/dev/null || true
 if [[ -z "${GH_REPO:-}" ]]; then
   url="$(git remote get-url "$GIT_REMOTE" 2>/dev/null || true)"
   if [[ -z "$url" ]]; then
-    echo "No git remote '$GIT_REMOTE' and GH_REPO is unset." >&2
+    echo "No git remote named '$GIT_REMOTE'. Set the repo explicitly: GH_REPO=owner/repo" >&2
     exit 1
   fi
   url="${url%.git}"
@@ -33,7 +34,7 @@ if [[ -z "${GH_REPO:-}" ]]; then
 fi
 
 if [[ -z "$GH_REPO" || "$GH_REPO" == *"*"* ]]; then
-  echo "Could not parse GitHub repo from remote. Set GH_REPO=owner/name." >&2
+  echo "Could not figure out the GitHub repo from your remote. Use: GH_REPO=owner/repo" >&2
   exit 1
 fi
 
@@ -43,12 +44,12 @@ version="$(
     | sed -E 's/.*versionName\s*=\s*"([^"]+)".*/\1/'
 )"
 if [[ -z "$version" ]]; then
-  echo "Could not read versionName from app/build.gradle.kts" >&2
+  echo "Could not read versionName from app/build.gradle.kts — check that file." >&2
   exit 1
 fi
 
 if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "versionName must be semver X.Y.Z (got: $version)" >&2
+  echo "versionName must look like semver 1.2.3 (you have: $version)." >&2
   exit 1
 fi
 
@@ -71,36 +72,37 @@ if [[ -n "$LAST_TAG" ]]; then
   last_ver="${LAST_TAG#v}"
   commits_since=$(( $(git rev-list --count "${LAST_TAG}..HEAD" 2>/dev/null) || 0 ))
   if [[ "$commits_since" -eq 0 ]]; then
-    echo "Nothing to ship: HEAD is at ${LAST_TAG} (no commits after that tag)." >&2
-    echo "Do new work and/or bump versionName in app/build.gradle.kts, commit, then release." >&2
+    echo "Nothing new to ship: your HEAD is already the commit tagged ${LAST_TAG}." >&2
+    echo "Add a new commit (e.g. bump versionName and versionCode in app/build.gradle.kts), then run make release again." >&2
     exit 1
   fi
   if ! semver_gt "$version" "$last_ver"; then
-    echo "versionName must be greater than the latest release tag (semver)." >&2
-    echo "  Latest tag on this branch: ${LAST_TAG} (${last_ver})" >&2
-    echo "  app/build.gradle.kts versionName: ${version}" >&2
+    echo "Almost there — you just need to bump the version in Gradle." >&2
+    echo "Latest tag on this branch is ${LAST_TAG}, but versionName is still \"${version}\"." >&2
+    echo "Open app/build.gradle.kts, set a higher version (e.g. after 0.1.0 use 0.1.1), bump versionCode, commit, then run: make release" >&2
     exit 1
   fi
 fi
 
 if gh release view "$TAG" --repo "$GH_REPO" &>/dev/null; then
-  echo "GitHub release ${TAG} already exists on ${GH_REPO}." >&2
+  echo "Release ${TAG} already exists on ${GH_REPO} — skipping so we do not duplicate it." >&2
+  echo "For another build, bump versionName, commit, then run make release again." >&2
   exit 1
 fi
 
-echo "[release] building…"
+echo "[release] Building…"
 bash "$ROOT/gradlew" assembleDebug
 
 shopt -s nullglob
 apks=("$ROOT/app/build/outputs/apk/debug"/*.apk)
 shopt -u nullglob
 if [[ ${#apks[@]} -eq 0 ]]; then
-  echo "No APK in app/build/outputs/apk/debug after build." >&2
+  echo "Build finished but no APK showed up under app/build/outputs/apk/debug — check the Gradle output." >&2
   exit 1
 fi
 APK="$(ls -t "${apks[@]}" | head -1)"
 echo "[release] APK: $APK"
-echo "[release] creating GitHub release $TAG on $GH_REPO …"
+echo "[release] Creating release ${TAG} on ${GH_REPO}…"
 
 gh release create "$TAG" \
   --repo "$GH_REPO" \
@@ -108,4 +110,4 @@ gh release create "$TAG" \
   --notes "$NOTES" \
   "$APK"
 
-echo "[release] done."
+echo "[release] Done — release published."
