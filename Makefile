@@ -5,7 +5,7 @@ ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 #   make devices            List USB + AVDs (default)
 #   make devices list|help|farms|create-slim|start NAME|wait|install-debug|kvm-check
 #   make build              ./gradlew assembleDebug (APK only — does not install)
-#   make release            assembleDebug + gh release (semver; clean tree; commits after last vX.Y.Z tag)
+#   make release            auto bump patch + versionCode, commit, push, assembleDebug, gh release
 #   make install            ./gradlew installDebug (needs adb device)
 #   make run                installDebug + launch launcher activity (fastest dev loop from CLI)
 #
@@ -24,8 +24,8 @@ help:
 	@echo "  make devices        — list adb + AVDs (same as: make devices list)"
 	@echo "  make devices help   — all device / emulator / farm subcommands"
 	@echo "  make build          — ./gradlew assembleDebug (compile only)"
-	@echo "  make release        — build + gh release (semver tag vX.Y.Z from app/build.gradle.kts; needs commits after last tag)"
-	@echo "                        — override: GH_REPO=owner/name RELEASE_NOTES='…'  GIT_REMOTE=origin"
+	@echo "  make release        — auto version bump in app/build.gradle.kts, commit, push, build, gh release"
+	@echo "                        — override: GH_REPO=… RELEASE_NOTES='…'  RELEASE_SKIP_PUSH=1  GIT_REMOTE=origin"
 	@echo "  make install        — ./gradlew installDebug"
 	@echo "  make run            — ./gradlew installDebug + start app"
 	@echo "  make install-apk    — push latest debug APK only (no Gradle — needs prior make build)"
