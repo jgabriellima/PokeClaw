@@ -118,6 +118,7 @@
     <string name="llm_config_model_name_hint">例: gpt-4o、gpt-4o-mini、claude-3-5-sonnet</string>
     <string name="llm_config_saved">LLM設定を保存しました</string>
     <string name="llm_config_api_key_required">API Keyを入力してください</string>
+    <string name="llm_config_model_required">モデル名を入力してください（例: gpt-4o または org/model）</string>
     <string name="menu_llm_config">LLM設定</string>
 
     <!-- 設定メニュー -->
@@ -218,6 +219,23 @@
     <string name="tool_name_search_app">アプリを検索</string>
     <string name="tool_name_clipboard">クリップボード</string>
     <string name="tool_name_scroll_to_find">スクロールして検索</string>
+    <string name="tool_name_schedule_task">タスク予約</string>
+    <string name="tool_name_list_scheduled_tasks">予約タスク一覧</string>
+    <string name="tool_name_cancel_scheduled_task">予約タスク取消</string>
+
+    <string name="scheduled_task_channel_name">予約タスク</string>
+    <string name="scheduled_task_notify_no_llm_title">予約タスクをスキップ</string>
+    <string name="scheduled_task_notify_no_llm_text">先に設定で LLM を構成してください。</string>
+    <string name="scheduled_task_notify_no_a11y_title">予約タスクをスキップ</string>
+    <string name="scheduled_task_notify_no_a11y_text">PokeClaw のユーザー補助を有効にしてください。</string>
+    <string name="scheduled_task_notify_busy_title">予約タスクを遅延</string>
+    <string name="scheduled_task_notify_busy_text">別のエージェントタスク実行中のため、後で再試行します。</string>
+    <string name="scheduled_task_notify_error_title">予約タスク</string>
+    <string name="scheduled_task_notify_app_not_ready">アプリ起動中です。可能なら再試行します。</string>
+
+    <string name="voice_need_mic_permission">音声入力にはマイク権限が必要です。</string>
+    <string name="voice_content_description_record">録音</string>
+    <string name="voice_content_description_stop">録音停止</string>
 
     <!-- 入力ダイアログ -->
     <string name="input_dialog_need_more">%d文字以上入力してください</string>

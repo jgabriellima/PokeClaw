@@ -37,6 +37,8 @@ Commands:
   farms, cloud      Links and when to use remote device farms
   help              This text
 
+Also: make emulator-test — headless AVD + :app:connectedDebugAndroidTest (scripts/emulator-test.sh)
+
 Environment:
   ANDROID_SDK_ROOT / ANDROID_HOME
   POKECLAW_SLIM_AVD, POKECLAW_SLIM_IMAGE, POKECLAW_SLIM_DEVICE

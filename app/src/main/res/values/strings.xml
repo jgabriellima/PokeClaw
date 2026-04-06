@@ -118,6 +118,7 @@
     <string name="llm_config_model_name_hint">e.g. gpt-4o, gpt-4o-mini, claude-3-5-sonnet</string>
     <string name="llm_config_saved">LLM configuration saved</string>
     <string name="llm_config_api_key_required">Please enter API Key</string>
+    <string name="llm_config_model_required">Please enter model name (e.g. gpt-4o or org/model)</string>
     <string name="menu_llm_config">LLM Config</string>
 
     <!-- Settings Menu -->
@@ -218,6 +219,23 @@
     <string name="tool_name_search_app">Search App</string>
     <string name="tool_name_clipboard">Clipboard</string>
     <string name="tool_name_scroll_to_find">Scroll to Find</string>
+    <string name="tool_name_schedule_task">Schedule task</string>
+    <string name="tool_name_list_scheduled_tasks">List scheduled tasks</string>
+    <string name="tool_name_cancel_scheduled_task">Cancel scheduled task</string>
+
+    <string name="scheduled_task_channel_name">Scheduled tasks</string>
+    <string name="scheduled_task_notify_no_llm_title">Scheduled task skipped</string>
+    <string name="scheduled_task_notify_no_llm_text">Configure the LLM in Settings before scheduled tasks can run.</string>
+    <string name="scheduled_task_notify_no_a11y_title">Scheduled task skipped</string>
+    <string name="scheduled_task_notify_no_a11y_text">Turn on the PokeClaw accessibility service so the agent can run.</string>
+    <string name="scheduled_task_notify_busy_title">Scheduled task delayed</string>
+    <string name="scheduled_task_notify_busy_text">Another agent task is running; this schedule will retry shortly.</string>
+    <string name="scheduled_task_notify_error_title">Scheduled task</string>
+    <string name="scheduled_task_notify_app_not_ready">App is still starting; the task will retry if possible.</string>
+
+    <string name="voice_need_mic_permission">Microphone permission is required for voice input.</string>
+    <string name="voice_content_description_record">Record voice</string>
+    <string name="voice_content_description_stop">Stop recording</string>
 
     <!-- Input Dialog -->
     <string name="input_dialog_need_more">Enter at least %d characters</string>

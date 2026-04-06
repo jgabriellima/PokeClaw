@@ -253,6 +253,8 @@ class LlmConfigActivity : BaseActivity() {
         // Storage info
         updateStorageInfo()
 
+        findViewById<TextView>(R.id.tvCloudTip)?.setTextColor(Color.parseColor("#8b949e"))
+
         // Cloud LLM
         val etApiKey = findViewById<EditText>(R.id.etApiKey)
         val etBaseUrl = findViewById<EditText>(R.id.etBaseUrl)
@@ -268,6 +270,10 @@ class LlmConfigActivity : BaseActivity() {
 
             if (apiKey.isEmpty() && baseUrl.isEmpty()) {
                 Toast.makeText(this, "Enter API Key or Base URL", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            if (modelName.isEmpty()) {
+                Toast.makeText(this, getString(R.string.llm_config_model_required), Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
 

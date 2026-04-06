@@ -89,6 +89,9 @@ android {
                 "META-INF/NOTICE.txt",
             )
         }
+        jniLibs {
+            useLegacyPackaging = true
+        }
     }
 }
 
@@ -98,6 +101,7 @@ dependencies {
     implementation(libs.material)
     implementation(libs.constraintlayout)
     implementation(libs.gson)
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.1")
 
 
     implementation(libs.oapi.sdk)
@@ -140,6 +144,10 @@ dependencies {
 
     // LiteRT-LM on-device LLM inference (Google AI Edge)
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.10.0")
+
+    // On-device ASR — WhisperKit (https://github.com/argmaxinc/WhisperKitAndroid) publishes the SDK on Maven;
+    // Qualcomm QNN artifacts are not on public repos, so we use whisperkit alone (CPU path where supported).
+    implementation("com.argmaxinc:whisperkit:0.3.3")
 
     // ZXing 二维码/条形码扫描
     implementation(libs.zxing)

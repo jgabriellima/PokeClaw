@@ -33,6 +33,9 @@
 # Tool 注册（反射）
 -keep class io.agents.pokeclaw.tool.** { *; }
 
+# WhisperKit / JNI
+-keep class com.argmaxinc.whisperkit.** { *; }
+
 # Channel（钉钉/飞书回调，保留泛型签名）
 -keep class io.agents.pokeclaw.channel.** { *; }
 

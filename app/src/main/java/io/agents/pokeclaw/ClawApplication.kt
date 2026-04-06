@@ -6,6 +6,7 @@ package io.agents.pokeclaw
 import io.agents.pokeclaw.agent.DefaultAgentService
 import io.agents.pokeclaw.base.BaseApp
 import io.agents.pokeclaw.channel.ChannelManager
+import io.agents.pokeclaw.schedule.ScheduledTaskScheduler
 import io.agents.pokeclaw.service.ForegroundService
 import io.agents.pokeclaw.tool.ToolRegistry
 import io.agents.pokeclaw.utils.KVUtils
@@ -33,6 +34,7 @@ class ClawApplication : BaseApp() {
         registerNetworkCallback()
         appViewModelInstance = getAppViewModelProvider()[AppViewModel::class.java]
         KVUtils.init(this)
+        ScheduledTaskScheduler.rescheduleAllPending(this)
         ToolRegistry.getInstance().registerAllTools(ToolRegistry.DeviceType.MOBILE)
         XLog.e(TAG, "ClawApplication initialized, tools registered: ${ToolRegistry.getInstance().getAllTools().size}")
 

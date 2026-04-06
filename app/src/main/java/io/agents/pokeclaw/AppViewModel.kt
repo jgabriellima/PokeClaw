@@ -156,6 +156,18 @@ class AppViewModel : ViewModel() {
     fun startNewTask(channel: Channel, task: String, messageID: String) =
         taskOrchestrator.startNewTask(channel, task, messageID)
 
+    /**
+     * Starts a LOCAL agent task only if the orchestrator lock is free (used by scheduled alarms).
+     * @return false if another task is already running.
+     */
+    fun startLocalScheduledTask(task: String, messageId: String): Boolean {
+        if (!taskOrchestrator.tryAcquireTask(messageId, Channel.LOCAL)) {
+            return false
+        }
+        taskOrchestrator.startNewTask(Channel.LOCAL, task, messageId)
+        return true
+    }
+
     private fun trySendScreenshot(channel: Channel, filePath: String, messageID: String) {
         try {
             val file = java.io.File(filePath)

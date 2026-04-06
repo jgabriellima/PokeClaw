@@ -6,6 +6,7 @@ package io.agents.pokeclaw.ui.chat
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color as AndroidColor
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -13,8 +14,19 @@ import android.os.Looper
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.*
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import com.google.ai.edge.litertlm.Content
+import io.agents.pokeclaw.ClawApplication
+import io.agents.pokeclaw.agent.LlmProvider
+import io.agents.pokeclaw.audio.CloudMultimodalMessages
+import io.agents.pokeclaw.audio.ModelAudioSupport
+import io.agents.pokeclaw.audio.PcmWavRecorder
+import io.agents.pokeclaw.audio.WhisperKitTranscriber
+import io.agents.pokeclaw.audio.stripOurWavHeaderToPcm16le
 import io.agents.pokeclaw.agent.llm.EngineHolder
 import io.agents.pokeclaw.agent.llm.LlmClientFactory
 import io.agents.pokeclaw.agent.llm.LocalModelManager
@@ -28,6 +40,7 @@ import io.agents.pokeclaw.service.ClawAccessibilityService
 import io.agents.pokeclaw.ui.settings.LlmConfigActivity
 import io.agents.pokeclaw.ui.settings.SettingsActivity
 import io.agents.pokeclaw.utils.KVUtils
+import io.agents.pokeclaw.R
 import io.agents.pokeclaw.agent.TaskShortcuts
 import io.agents.pokeclaw.utils.XLog
 import com.google.ai.edge.litertlm.Backend
@@ -49,7 +62,16 @@ class ComposeChatActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "ComposeChatActivity"
+        private const val VOICE_MAX_MS = 45_000L
     }
+
+    private val chatDraftText = mutableStateOf("")
+    private val chatVoiceRecording = mutableStateOf(false)
+    private var voiceWavRecorder: PcmWavRecorder? = null
+    private val voiceStopHandler = Handler(Looper.getMainLooper())
+    private val voiceStopRunnable = Runnable { stopVoiceRecording() }
+
+    private lateinit var recordAudioLauncher: ActivityResultLauncher<String>
 
     private var conversationId = "chat_${System.currentTimeMillis()}"
     private val executor = Executors.newSingleThreadExecutor()
@@ -78,14 +100,28 @@ class ComposeChatActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+        recordAudioLauncher = registerForActivityResult(
+            ActivityResultContracts.RequestPermission(),
+        ) { granted ->
+            if (granted) startVoiceRecordingInternal()
+            else Toast.makeText(this, getString(R.string.voice_need_mic_permission), Toast.LENGTH_LONG).show()
+        }
+        WindowCompat.setDecorFitsSystemWindows(window, false)
 
         // Hide floating circle
         try { FloatingCircleManager.hide() } catch (_: Exception) {}
 
-        // Status bar color
         val themeColors = ThemeManager.getColors()
         window.statusBarColor = themeColors.toolbarBg
+        // Match navigation bar to app chrome so the system bar does not "float" with a default color
+        window.navigationBarColor = themeColors.bg
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+            window.navigationBarDividerColor = AndroidColor.TRANSPARENT
+        }
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightNavigationBars = !ThemeManager.isDark()
+        }
 
         // Build Compose colors from ThemeManager
         val composeColors = with(ThemeManager) { themeColors.toComposeColors() }
@@ -98,15 +134,25 @@ class ComposeChatActivity : ComponentActivity() {
                 isProcessing = _isProcessing.value,
                 isDownloading = _isDownloading.value,
                 downloadProgress = _downloadProgress.value,
-                onSendChat = { sendChat(it) },
+                draftText = chatDraftText.value,
+                onDraftTextChange = { chatDraftText.value = it },
+                isVoiceRecording = chatVoiceRecording.value,
+                onVoiceToggle = { toggleVoiceRecording() },
+                onSendChat = { text, voiceWav -> sendChat(text, voiceWav) },
                 onSendTask = { sendTask(it) },
-                onNewChat = { newChat() },
+                onNewChat = {
+                    chatDraftText.value = ""
+                    newChat()
+                },
                 onOpenSettings = { startActivity(Intent(this, SettingsActivity::class.java)) },
                 onOpenModels = { startActivity(Intent(this, LlmConfigActivity::class.java)) },
                 onFixPermissions = { startActivity(Intent(this, SettingsActivity::class.java)) },
                 onAttach = { Toast.makeText(this, "Image upload coming soon", Toast.LENGTH_SHORT).show() },
                 conversations = _conversations.toList(),
-                onSelectConversation = { loadConversation(it) },
+                onSelectConversation = {
+                    chatDraftText.value = ""
+                    loadConversation(it)
+                },
                 colors = composeColors,
             )
         }
@@ -205,6 +251,14 @@ class ComposeChatActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        voiceStopHandler.removeCallbacks(voiceStopRunnable)
+        if (chatVoiceRecording.value) {
+            chatVoiceRecording.value = false
+            try {
+                voiceWavRecorder?.stop()
+            } catch (_: Exception) { }
+            voiceWavRecorder = null
+        }
         super.onDestroy()
         // Close the Conversation but leave the Engine in EngineHolder.
         // The engine will be reused if the Activity is recreated (e.g. rotation).
@@ -347,9 +401,17 @@ class ComposeChatActivity : ComponentActivity() {
 
     // ==================== CHAT ====================
 
-    private fun sendChat(text: String) {
+    private fun sendChat(text: String, voiceWav: ByteArray? = null) {
+        val trimmed = text.trim()
         if (!isModelReady) return
-        addUser(text)
+        if (trimmed.isEmpty() && (voiceWav == null || voiceWav.isEmpty())) return
+
+        val userVisible = when {
+            voiceWav != null && trimmed.isNotEmpty() -> "🎤 $trimmed"
+            voiceWav != null -> "🎤 Voice message"
+            else -> trimmed
+        }
+        addUser(userVisible)
         _isProcessing.value = true
         _messages.add(ChatMessage(ChatMessage.Role.ASSISTANT, "..."))
 
@@ -357,11 +419,53 @@ class ComposeChatActivity : ComponentActivity() {
             try {
                 when {
                     KVUtils.isRemoteLlmConfigured() -> {
-                        val client = LlmClientFactory.create(appViewModel.getAgentConfig())
+                        val cfg = appViewModel.getAgentConfig()
+                        var wav = voiceWav
+                        var textIn = trimmed
+                        val tryOpenAiAudio = cfg.provider == LlmProvider.OPENAI &&
+                            wav != null &&
+                            ModelAudioSupport.remoteOpenAiStyleModelMayAcceptAudio(cfg.modelName)
+                        if (wav != null && !tryOpenAiAudio) {
+                            val pcm = stripOurWavHeaderToPcm16le(wav)
+                            val tr = WhisperKitTranscriber.transcribePcm16MonoBlocking(
+                                ClawApplication.instance,
+                                pcm,
+                            )
+                            textIn = listOf(textIn, tr ?: "").filter { it.isNotBlank() }.joinToString("\n")
+                            wav = null
+                        }
+                        val client = LlmClientFactory.create(cfg)
                         try {
-                            val lcMessages = uiMessagesToLangchain(_messages.dropLast(1))
-                            val response = client.chat(lcMessages, emptyList())
-                            val responseText = (response.text ?: "").ifEmpty { "(no response)" }
+                            val lastUser: UserMessage? =
+                                if (tryOpenAiAudio && wav != null) {
+                                    CloudMultimodalMessages.userTextPlusWav(textIn, wav)
+                                } else {
+                                    null
+                                }
+                            val lcMessages = uiMessagesToLangchain(_messages.dropLast(1), lastUser)
+                            fun runRemote(msgs: List<dev.langchain4j.data.message.ChatMessage>): String {
+                                val response = client.chat(msgs, emptyList())
+                                return (response.text ?: "").ifEmpty { "(no response)" }
+                            }
+                            val responseText = try {
+                                runRemote(lcMessages)
+                            } catch (e: Exception) {
+                                if (tryOpenAiAudio) {
+                                    val capturedWav = voiceWav ?: throw e
+                                    XLog.w(TAG, "Multimodal audio request failed, falling back to Whisper text", e)
+                                    val pcm = stripOurWavHeaderToPcm16le(capturedWav)
+                                    val tr = WhisperKitTranscriber.transcribePcm16MonoBlocking(
+                                        ClawApplication.instance,
+                                        pcm,
+                                    )
+                                    val merged = listOf(trimmed, tr ?: "").filter { it.isNotBlank() }.joinToString("\n")
+                                    val history = uiMessagesToLangchain(_messages.dropLast(2))
+                                    val retryMsgs = history + UserMessage.from(merged)
+                                    runRemote(retryMsgs)
+                                } else {
+                                    throw e
+                                }
+                            }
                             runOnUiThread {
                                 val idx = _messages.indexOfLast { it.role == ChatMessage.Role.ASSISTANT }
                                 if (idx >= 0) _messages[idx] = _messages[idx].copy(content = responseText)
@@ -373,7 +477,28 @@ class ComposeChatActivity : ComponentActivity() {
                         }
                     }
                     conversation != null -> {
-                        val response = conversation!!.sendMessage(text)
+                        var wavLocal = voiceWav
+                        var textIn = trimmed
+                        if (wavLocal != null && !ModelAudioSupport.localGemma4SupportsNativeAudio()) {
+                            val pcm = stripOurWavHeaderToPcm16le(wavLocal)
+                            val tr = WhisperKitTranscriber.transcribePcm16MonoBlocking(
+                                ClawApplication.instance,
+                                pcm,
+                            )
+                            textIn = listOf(textIn, tr ?: "").filter { it.isNotBlank() }.joinToString("\n")
+                            wavLocal = null
+                        }
+                        val response = when {
+                            wavLocal != null -> {
+                                val parts = mutableListOf<Content>()
+                                if (textIn.isNotBlank()) {
+                                    parts.add(Content.Text(textIn))
+                                }
+                                parts.add(Content.AudioBytes(wavLocal))
+                                conversation!!.sendMessage(Contents.of(parts), emptyMap())
+                            }
+                            else -> conversation!!.sendMessage(textIn)
+                        }
                         val responseText = response?.toString() ?: "(no response)"
                         runOnUiThread {
                             val idx = _messages.indexOfLast { it.role == ChatMessage.Role.ASSISTANT }
@@ -386,7 +511,9 @@ class ComposeChatActivity : ComponentActivity() {
                         runOnUiThread {
                             val idx = _messages.indexOfLast { it.role == ChatMessage.Role.ASSISTANT }
                             if (idx >= 0) {
-                                _messages[idx] = _messages[idx].copy(content = "Configure an on-device or cloud model in Models (menu).")
+                                _messages[idx] = _messages[idx].copy(
+                                    content = "Configure an on-device or cloud model in Models (menu).",
+                                )
                             }
                             _isProcessing.value = false
                         }
@@ -403,9 +530,20 @@ class ComposeChatActivity : ComponentActivity() {
         }
     }
 
-    private fun uiMessagesToLangchain(messages: List<ChatMessage>): List<dev.langchain4j.data.message.ChatMessage> {
+    private fun uiMessagesToLangchain(
+        messages: List<ChatMessage>,
+        lastUserReplacement: UserMessage? = null,
+    ): List<dev.langchain4j.data.message.ChatMessage> {
+        val source = if (lastUserReplacement != null &&
+            messages.isNotEmpty() &&
+            messages.last().role == ChatMessage.Role.USER
+        ) {
+            messages.dropLast(1)
+        } else {
+            messages
+        }
         val out = ArrayList<dev.langchain4j.data.message.ChatMessage>()
-        for (m in messages) {
+        for (m in source) {
             when (m.role) {
                 ChatMessage.Role.USER -> out.add(UserMessage.from(m.content))
                 ChatMessage.Role.ASSISTANT ->
@@ -414,7 +552,51 @@ class ComposeChatActivity : ComponentActivity() {
                 ChatMessage.Role.TOOL_GROUP -> { }
             }
         }
+        if (lastUserReplacement != null) {
+            out.add(lastUserReplacement)
+        }
         return out
+    }
+
+    private fun toggleVoiceRecording() {
+        if (chatVoiceRecording.value) {
+            stopVoiceRecording()
+        } else {
+            when {
+                ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) !=
+                    PackageManager.PERMISSION_GRANTED -> {
+                    recordAudioLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                }
+                else -> startVoiceRecordingInternal()
+            }
+        }
+    }
+
+    private fun startVoiceRecordingInternal() {
+        if (chatVoiceRecording.value) return
+        voiceWavRecorder = PcmWavRecorder()
+        if (voiceWavRecorder?.start() != true) {
+            voiceWavRecorder = null
+            Toast.makeText(this, "Could not start microphone", Toast.LENGTH_SHORT).show()
+            return
+        }
+        chatVoiceRecording.value = true
+        voiceStopHandler.postDelayed(voiceStopRunnable, VOICE_MAX_MS)
+    }
+
+    private fun stopVoiceRecording() {
+        voiceStopHandler.removeCallbacks(voiceStopRunnable)
+        if (!chatVoiceRecording.value) return
+        chatVoiceRecording.value = false
+        val wav = try {
+            voiceWavRecorder?.stop()
+        } finally {
+            voiceWavRecorder = null
+        }
+        if (wav != null && wav.isNotEmpty()) {
+            sendChat(chatDraftText.value.trim(), wav)
+            chatDraftText.value = ""
+        }
     }
 
     private fun sendTask(text: String) {

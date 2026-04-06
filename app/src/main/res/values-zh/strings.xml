@@ -118,6 +118,7 @@
     <string name="llm_config_model_name_hint">如 gpt-4o、gpt-4o-mini、claude-3-5-sonnet</string>
     <string name="llm_config_saved">LLM 配置已保存</string>
     <string name="llm_config_api_key_required">请填写 API Key</string>
+    <string name="llm_config_model_required">请填写模型名称（如 gpt-4o 或 org/model）</string>
     <string name="menu_llm_config">LLM 配置</string>
 
     <!-- 设置菜单项 -->
@@ -218,6 +219,23 @@
     <string name="tool_name_search_app">搜索APP</string>
     <string name="tool_name_clipboard">剪贴板</string>
     <string name="tool_name_scroll_to_find">滚动查找</string>
+    <string name="tool_name_schedule_task">定时任务</string>
+    <string name="tool_name_list_scheduled_tasks">列出定时任务</string>
+    <string name="tool_name_cancel_scheduled_task">取消定时任务</string>
+
+    <string name="scheduled_task_channel_name">定时任务</string>
+    <string name="scheduled_task_notify_no_llm_title">已跳过定时任务</string>
+    <string name="scheduled_task_notify_no_llm_text">请先在设置中配置 LLM，定时任务才能运行。</string>
+    <string name="scheduled_task_notify_no_a11y_title">已跳过定时任务</string>
+    <string name="scheduled_task_notify_no_a11y_text">请开启 PokeClaw 无障碍服务，代理才能执行操作。</string>
+    <string name="scheduled_task_notify_busy_title">定时任务延后</string>
+    <string name="scheduled_task_notify_busy_text">当前已有代理任务在执行，此任务将稍后重试。</string>
+    <string name="scheduled_task_notify_error_title">定时任务</string>
+    <string name="scheduled_task_notify_app_not_ready">应用仍在启动，若可能将自动重试。</string>
+
+    <string name="voice_need_mic_permission">语音输入需要麦克风权限。</string>
+    <string name="voice_content_description_record">录音</string>
+    <string name="voice_content_description_stop">停止录音</string>
 
     <!-- 输入弹窗 -->
     <string name="input_dialog_need_more">至少输入%d个字符</string>

@@ -129,7 +129,7 @@
                 android:layout_height="0dp"
                 android:visibility="gone" />
 
-            <!-- Cloud LLM — Coming Soon -->
+            <!-- Cloud LLM — OpenAI-compatible API -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
@@ -141,46 +141,128 @@
                 android:textSize="13pt"
                 android:textStyle="bold" />
 
+            <TextView
+                android:id="@+id/tvCloudTip"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingHorizontal="4pt"
+                android:paddingBottom="12pt"
+                android:text="@string/llm_config_tip"
+                android:textColor="@color/colorTextTertiary"
+                android:textSize="12pt" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingHorizontal="4pt"
+                android:paddingBottom="8pt"
+                android:text="@string/llm_config_api_key"
+                android:textColor="@color/colorTextPrimary"
+                android:textSize="14pt"
+                android:textStyle="bold" />
+
             <androidx.cardview.widget.CardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginBottom="24pt"
                 app:cardBackgroundColor="@color/colorContainerBrighten"
                 app:cardCornerRadius="12pt"
                 app:cardElevation="1pt">
 
-                <LinearLayout
+                <EditText
+                    android:id="@+id/etApiKey"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:padding="16pt"
-                    android:gravity="center">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Coming Soon"
-                        android:textColor="@color/colorTextPrimary"
-                        android:textSize="16pt"
-                        android:textStyle="bold" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="6pt"
-                        android:text="Connect to cloud models like GPT-4o and Claude for even smarter automation."
-                        android:textColor="@color/colorTextTertiary"
-                        android:textSize="12pt"
-                        android:gravity="center" />
-
-                </LinearLayout>
+                    android:minHeight="48pt"
+                    android:background="@null"
+                    android:hint="@string/llm_config_api_key_hint"
+                    android:importantForAutofill="no"
+                    android:inputType="textPassword"
+                    android:paddingHorizontal="16pt"
+                    android:paddingVertical="12pt"
+                    android:textColor="@color/colorTextPrimary"
+                    android:textColorHint="@color/colorTextTertiary"
+                    android:textSize="15pt" />
             </androidx.cardview.widget.CardView>
 
-            <!-- Hidden fields kept for code compatibility -->
-            <EditText android:id="@+id/etApiKey" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
-            <EditText android:id="@+id/etBaseUrl" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
-            <EditText android:id="@+id/etModelName" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
-            <io.agents.pokeclaw.widget.KButton android:id="@+id/btnSaveCloud" android:layout_width="0dp" android:layout_height="0dp" android:visibility="gone" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16pt"
+                android:paddingHorizontal="4pt"
+                android:paddingBottom="8pt"
+                android:text="@string/llm_config_base_url"
+                android:textColor="@color/colorTextPrimary"
+                android:textSize="14pt"
+                android:textStyle="bold" />
+
+            <androidx.cardview.widget.CardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:cardBackgroundColor="@color/colorContainerBrighten"
+                app:cardCornerRadius="12pt"
+                app:cardElevation="1pt">
+
+                <EditText
+                    android:id="@+id/etBaseUrl"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48pt"
+                    android:background="@null"
+                    android:hint="@string/llm_config_base_url_hint"
+                    android:importantForAutofill="no"
+                    android:inputType="textUri"
+                    android:paddingHorizontal="16pt"
+                    android:paddingVertical="12pt"
+                    android:textColor="@color/colorTextPrimary"
+                    android:textColorHint="@color/colorTextTertiary"
+                    android:textSize="15pt" />
+            </androidx.cardview.widget.CardView>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16pt"
+                android:paddingHorizontal="4pt"
+                android:paddingBottom="8pt"
+                android:text="@string/llm_config_model_name"
+                android:textColor="@color/colorTextPrimary"
+                android:textSize="14pt"
+                android:textStyle="bold" />
+
+            <androidx.cardview.widget.CardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:cardBackgroundColor="@color/colorContainerBrighten"
+                app:cardCornerRadius="12pt"
+                app:cardElevation="1pt">
+
+                <EditText
+                    android:id="@+id/etModelName"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="48pt"
+                    android:background="@null"
+                    android:hint="@string/llm_config_model_name_hint"
+                    android:importantForAutofill="no"
+                    android:inputType="text"
+                    android:paddingHorizontal="16pt"
+                    android:paddingVertical="12pt"
+                    android:textColor="@color/colorTextPrimary"
+                    android:textColorHint="@color/colorTextTertiary"
+                    android:textSize="15pt" />
+            </androidx.cardview.widget.CardView>
+
+            <io.agents.pokeclaw.widget.KButton
+                android:id="@+id/btnSaveCloud"
+                android:layout_width="match_parent"
+                android:layout_height="48pt"
+                android:layout_marginTop="20pt"
+                android:layout_marginBottom="24pt"
+                android:gravity="center"
+                android:text="@string/common_save"
+                android:textColor="@color/colorBrandOnPrimary"
+                android:textSize="15pt"
+                android:textStyle="bold" />
 
         </LinearLayout>
     </ScrollView>

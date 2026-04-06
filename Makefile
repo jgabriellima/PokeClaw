@@ -4,6 +4,7 @@ ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 #   make setup              Install/check JDK 17, Android SDK, licenses, local.properties
 #   make devices            List USB + AVDs (default)
 #   make devices list|help|farms|create-slim|start NAME|wait|install-debug|kvm-check
+#   make emulator-test      Headless AVD (poke_slim) if needed → connectedDebugAndroidTest
 #   make build              ./gradlew assembleDebug (APK only — does not install)
 #   make release            auto bump patch + versionCode, commit, push, assembleDebug, gh release
 #   make install            ./gradlew installDebug (needs adb device)
@@ -13,7 +14,7 @@ ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 #   make devices start poke_slim
 #   make devices create-slim
 
-.PHONY: default help setup devices build release install run install-apk run-apk uninstall clean-gradle
+.PHONY: default help setup devices emulator-test build release install run install-apk run-apk uninstall clean-gradle
 
 default: help
 
@@ -23,6 +24,8 @@ help:
 	@echo "  make setup          — JDK 17 + Android SDK (cmdline-tools) + platforms/build-tools for this project"
 	@echo "  make devices        — list adb + AVDs (same as: make devices list)"
 	@echo "  make devices help   — all device / emulator / farm subcommands"
+	@echo "  make emulator-test  — start headless emulator if none online, then :app:connectedDebugAndroidTest"
+	@echo "                        — env: POKECLAW_SLIM_AVD POKECLAW_EMU_EXTRA POKECLAW_EMU_BOOT_TIMEOUT POKECLAW_EMU_AUTOKILL"
 	@echo "  make build          — ./gradlew assembleDebug (compile only)"
 	@echo "  make release        — auto version bump in app/build.gradle.kts, commit, push, build, gh release"
 	@echo "                        — override: GH_REPO=… RELEASE_NOTES='…'  RELEASE_SKIP_PUSH=1  GIT_REMOTE=origin"
@@ -58,6 +61,9 @@ endif
 
 devices:
 	@bash "$(ROOT)/scripts/devices.sh" $(DEVICES_ARGS)
+
+emulator-test:
+	@bash "$(ROOT)/scripts/emulator-test.sh"
 
 build:
 	@bash "$(ROOT)/gradlew" assembleDebug

@@ -19,6 +19,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
 import io.agents.pokeclaw.R
@@ -83,7 +84,11 @@ fun ChatScreen(
     isProcessing: Boolean,
     isDownloading: Boolean = false,
     downloadProgress: Int = 0,
-    onSendChat: (String) -> Unit,
+    draftText: String,
+    onDraftTextChange: (String) -> Unit,
+    isVoiceRecording: Boolean,
+    onVoiceToggle: () -> Unit,
+    onSendChat: (String, ByteArray?) -> Unit,
     onSendTask: (String) -> Unit,
     onNewChat: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -110,6 +115,7 @@ fun ChatScreen(
                     conversations = conversations,
                     onNewChat = {
                         scope.launch { drawerState.close() }
+                        onDraftTextChange("")
                         onNewChat()
                     },
                     onSelectConversation = {
@@ -144,7 +150,11 @@ fun ChatScreen(
             bottomBar = {
                 if (!isDownloading) {
                     ChatInputBar(
+                        text = draftText,
+                        onTextChange = onDraftTextChange,
                         isProcessing = isProcessing,
+                        isVoiceRecording = isVoiceRecording,
+                        onVoiceToggle = onVoiceToggle,
                         onSendChat = onSendChat,
                         onSendTask = onSendTask,
                         onAttach = onAttach,
@@ -453,8 +463,12 @@ private fun ToolGroup(message: ChatMessage, colors: PokeclawColors) {
 
 @Composable
 private fun ChatInputBar(
+    text: String,
+    onTextChange: (String) -> Unit,
     isProcessing: Boolean,
-    onSendChat: (String) -> Unit,
+    isVoiceRecording: Boolean,
+    onVoiceToggle: () -> Unit,
+    onSendChat: (String, ByteArray?) -> Unit,
     onSendTask: (String) -> Unit,
     onAttach: () -> Unit,
     colors: PokeclawColors,
@@ -462,20 +476,23 @@ private fun ChatInputBar(
     prefillIsTask: Boolean = false,
     onPrefillConsumed: () -> Unit = {},
 ) {
-    var text by remember { mutableStateOf("") }
     var isTaskMode by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
 
     // Consume prefill from prompt chips
     LaunchedEffect(prefillText) {
         if (prefillText.isNotEmpty()) {
-            text = prefillText
+            onTextChange(prefillText)
             isTaskMode = prefillIsTask
             onPrefillConsumed()
         }
     }
 
-    Column(modifier = Modifier.background(colors.surface)) {
+    Column(
+        modifier = Modifier
+            .background(colors.surface)
+            .navigationBarsPadding(),
+    ) {
         HorizontalDivider(color = colors.divider, thickness = 0.5.dp)
 
         // Mode toggle tabs — Material Icons, no emoji
@@ -509,10 +526,39 @@ private fun ChatInputBar(
                 .padding(start = 8.dp, end = 8.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            if (!isTaskMode) {
+                IconButton(
+                    onClick = onVoiceToggle,
+                    enabled = !isProcessing,
+                    modifier = Modifier.size(40.dp),
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Mic,
+                        contentDescription = stringResource(R.string.voice_content_description_record),
+                        tint = if (isVoiceRecording) MaterialTheme.colorScheme.error else colors.textSecondary,
+                        modifier = Modifier.size(22.dp),
+                    )
+                }
+            } else {
+                Spacer(Modifier.width(4.dp))
+            }
+
+            IconButton(
+                onClick = onAttach,
+                modifier = Modifier.size(40.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.AttachFile,
+                    contentDescription = "Attach",
+                    tint = colors.textSecondary,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+
             // Input — compact height like ChatGPT
             OutlinedTextField(
                 value = text,
-                onValueChange = { text = it },
+                onValueChange = onTextChange,
                 placeholder = {
                     Text(
                         if (isTaskMode) "Tell me what to do..." else "Ask anything...",
@@ -543,11 +589,11 @@ private fun ChatInputBar(
                     if (text.isNotBlank()) {
                         if (isTaskMode) {
                             onSendTask(text.trim())
-                            text = ""
+                            onTextChange("")
                             focusManager.clearFocus()
                         } else if (!isProcessing) {
-                            onSendChat(text.trim())
-                            text = ""
+                            onSendChat(text.trim(), null)
+                            onTextChange("")
                             focusManager.clearFocus()
                         }
                     }

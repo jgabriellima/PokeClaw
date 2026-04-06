@@ -41,6 +41,9 @@ object ToolRegistry {
         register(ClipboardTool())
         register(SendFileTool())
         register(FinishTool())
+        register(ScheduleTaskTool())
+        register(ListScheduledTasksTool())
+        register(CancelScheduledTaskTool())
     }
 
     private fun registerTvTools() {

@@ -5,6 +5,8 @@ package io.agents.pokeclaw.ui.chat
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color as AndroidColor
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -15,6 +17,10 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 import androidx.drawerlayout.widget.DrawerLayout
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -85,10 +91,25 @@ class ChatActivity : BaseActivity() {
 
         setContentView(R.layout.activity_chat)
 
-        // Apply theme colors from ThemeManager
         val themeColors = ThemeManager.getColors()
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = themeColors.toolbarBg
+        window.navigationBarColor = themeColors.bg
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+            window.navigationBarDividerColor = AndroidColor.TRANSPARENT
+        }
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightNavigationBars = !ThemeManager.isDark()
+        }
         window.decorView.setBackgroundColor(themeColors.bg)
+
+        val bottomDock = findViewById<LinearLayout>(R.id.layoutChatBottomDock)
+        ViewCompat.setOnApplyWindowInsetsListener(bottomDock) { v, insets ->
+            val nav = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
+            v.updatePadding(bottom = nav.bottom)
+            insets
+        }
 
         drawerLayout = findViewById(R.id.drawerLayout)
         tvStatus = findViewById(R.id.tvStatus)

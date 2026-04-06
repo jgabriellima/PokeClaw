@@ -6,6 +6,7 @@ package io.agents.pokeclaw.service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import io.agents.pokeclaw.schedule.ScheduledTaskScheduler
 import io.agents.pokeclaw.utils.XLog
 
 /**
@@ -24,6 +25,7 @@ class BootReceiver : BroadcastReceiver() {
             intent.action == "android.intent.action.QUICKBOOT_POWERON") {
             XLog.i(TAG, "收到开机广播，启动前台服务")
             ForegroundService.start(context)
+            ScheduledTaskScheduler.rescheduleAllPending(context)
         }
     }
 }
